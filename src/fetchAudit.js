@@ -1,57 +1,32 @@
-import type { AuditData, RawAssignment } from './auditTypes';
-import { invertAssignments } from './invert';
-import { fetchAllPages, type JiraClient } from './jiraClient';
+import { invertAssignments } from './invert.js';
+import { fetchAllPages } from './jiraClient.js';
 
-interface Project {
-  id: string;
-  key: string;
-  name: string;
-}
+/**
+ * @typedef {object} AuditResult
+ * @property {import('./invert.js').AuditData} data
+ * @property {string[]} warnings
+ */
 
-interface RoleActor {
-  type: string;
-  displayName?: string;
-  actorUser?: { accountId: string };
-  actorGroup?: { name?: string; displayName?: string; groupId: string };
-}
-
-interface RoleDetail {
-  actors?: RoleActor[];
-}
-
-interface GroupMember {
-  accountId: string;
-  displayName: string;
-  emailAddress?: string | null;
-}
-
-interface UserDetail {
-  accountId: string;
-  displayName: string;
-  emailAddress?: string | null;
-}
-
-export interface AuditResult {
-  data: AuditData;
-  warnings: string[];
-}
-
-export async function buildAudit(
-  client: JiraClient,
-  baseUrl: string,
-  opts: { now?: () => Date } = {},
-): Promise<AuditResult> {
+/**
+ * Fetch projects -> roles -> actors from Jira, resolve group/user actors
+ * (with caching, warn-and-continue on failures), and invert to a user view.
+ * @param {import('./jiraClient.js').JiraClient} client
+ * @param {string} baseUrl
+ * @param {{ now?: () => Date }} [opts]
+ * @returns {Promise<AuditResult>}
+ */
+export async function buildAudit(client, baseUrl, opts = {}) {
   const now = opts.now ?? (() => new Date());
-  const warnings: string[] = [];
-  const raws: RawAssignment[] = [];
+  const warnings = [];
+  const raws = [];
 
-  const groupCache = new Map<string, GroupMember[]>();
-  const userCache = new Map<string, UserDetail>();
+  const groupCache = new Map();
+  const userCache = new Map();
 
-  async function resolveGroup(groupId: string): Promise<GroupMember[]> {
+  async function resolveGroup(groupId) {
     const cached = groupCache.get(groupId);
     if (cached) return cached;
-    const members = await fetchAllPages<GroupMember>(
+    const members = await fetchAllPages(
       client,
       (startAt) =>
         `/rest/api/3/group/member?groupId=${encodeURIComponent(groupId)}&startAt=${startAt}&includeInactiveUsers=true`,
@@ -60,42 +35,40 @@ export async function buildAudit(
     return members;
   }
 
-  async function resolveUser(accountId: string, fallbackName: string): Promise<UserDetail> {
+  async function resolveUser(accountId, fallbackName) {
     const cached = userCache.get(accountId);
     if (cached) return cached;
-    let detail: UserDetail;
+    let detail;
     try {
-      detail = await client.getJson<UserDetail>(`/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`);
+      detail = await client.getJson(`/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`);
     } catch (err) {
-      warnings.push(`User ${accountId}: ${(err as Error).message}`);
+      warnings.push(`User ${accountId}: ${err.message}`);
       detail = { accountId, displayName: fallbackName, emailAddress: null };
     }
     userCache.set(accountId, detail);
     return detail;
   }
 
-  const projects = await fetchAllPages<Project>(
+  const projects = await fetchAllPages(
     client,
     (startAt) => `/rest/api/3/project/search?startAt=${startAt}&maxResults=50`,
   );
 
   for (const project of projects) {
-    let roleMap: Record<string, string>;
+    let roleMap;
     try {
-      roleMap = await client.getJson<Record<string, string>>(
-        `/rest/api/3/project/${encodeURIComponent(project.key)}/role`,
-      );
+      roleMap = await client.getJson(`/rest/api/3/project/${encodeURIComponent(project.key)}/role`);
     } catch (err) {
-      warnings.push(`Project ${project.key} roles: ${(err as Error).message}`);
+      warnings.push(`Project ${project.key} roles: ${err.message}`);
       continue;
     }
 
     for (const [roleName, roleUrl] of Object.entries(roleMap)) {
-      let roleDetail: RoleDetail;
+      let roleDetail;
       try {
-        roleDetail = await client.getJson<RoleDetail>(roleUrl);
+        roleDetail = await client.getJson(roleUrl);
       } catch (err) {
-        warnings.push(`Project ${project.key} role ${roleName}: ${(err as Error).message}`);
+        warnings.push(`Project ${project.key} role ${roleName}: ${err.message}`);
         continue;
       }
 
@@ -132,10 +105,10 @@ export async function buildAudit(
         } catch (err) {
           if (actor.actorGroup) {
             const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
-            warnings.push(`Project ${project.key} role ${roleName} group ${groupName}: ${(err as Error).message}`);
+            warnings.push(`Project ${project.key} role ${roleName} group ${groupName}: ${err.message}`);
           } else {
             const actorLabel = actor.actorUser?.accountId ?? actor.displayName ?? 'unknown actor';
-            warnings.push(`Project ${project.key} role ${roleName} actor ${actorLabel}: ${(err as Error).message}`);
+            warnings.push(`Project ${project.key} role ${roleName} actor ${actorLabel}: ${err.message}`);
           }
         }
       }

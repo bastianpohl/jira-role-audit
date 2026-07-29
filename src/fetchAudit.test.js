@@ -1,10 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
-import { buildAudit } from './fetchAudit';
-import type { JiraClient } from './jiraClient';
+import { buildAudit } from './fetchAudit.js';
 
 // Router-style mock client keyed by URL/path substring.
-function mockClient(routes: Record<string, unknown>): JiraClient {
-  const getJson = vi.fn(async (p: string) => {
+function mockClient(routes) {
+  const getJson = vi.fn(async (p) => {
     // Prefer the last-declared matching key, not the first, so a more
     // specific route (e.g. '/role/10' or '/project/AAA/role/10',
     // declared later) wins over a shorter route it happens to contain
@@ -14,7 +13,7 @@ function mockClient(routes: Record<string, unknown>): JiraClient {
     if (!key) throw new Error(`no route for ${p}`);
     return routes[key];
   });
-  return { getJson: getJson as unknown as JiraClient['getJson'] };
+  return { getJson };
 }
 
 const now = () => new Date('2026-07-29T10:00:00Z');
@@ -69,7 +68,7 @@ describe('buildAudit', () => {
     expect(data.users[0].areaCount).toBe(2);
     expect(data.users[0].assignments[0].via).toEqual({ kind: 'group', groupName: 'devs' });
     // group members fetched once despite two projects (cache)
-    const calls = (client.getJson as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+    const calls = client.getJson.mock.calls.map((c) => c[0]);
     expect(calls.filter((c) => c.includes('/group/member?groupId=g1'))).toHaveLength(1);
     // Jira's group-member endpoint defaults to excluding deactivated users; the audit
     // must explicitly request them so offboarded-but-still-grouped accounts show up.
@@ -78,8 +77,8 @@ describe('buildAudit', () => {
   });
 
   test('collects a warning and continues when a group actor lookup fails, without aborting the whole audit', async () => {
-    const client: JiraClient = {
-      getJson: vi.fn(async (p: string) => {
+    const client = {
+      getJson: vi.fn(async (p) => {
         if (p.includes('/project/search')) {
           return {
             values: [
@@ -110,7 +109,7 @@ describe('buildAudit', () => {
           return { accountId: 'u2', displayName: 'Bob', emailAddress: 'bob@acme.com' };
         }
         throw new Error(`no route for ${p}`);
-      }) as unknown as JiraClient['getJson'],
+      }),
     };
 
     const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
@@ -127,8 +126,8 @@ describe('buildAudit', () => {
   });
 
   test('collects a warning and falls back to null email when a direct user lookup fails, without aborting the run', async () => {
-    const client: JiraClient = {
-      getJson: vi.fn(async (p: string) => {
+    const client = {
+      getJson: vi.fn(async (p) => {
         if (p.includes('/project/search')) {
           return {
             values: [
@@ -159,7 +158,7 @@ describe('buildAudit', () => {
           return { accountId: 'u2', displayName: 'Bob', emailAddress: 'bob@acme.com' };
         }
         throw new Error(`no route for ${p}`);
-      }) as unknown as JiraClient['getJson'],
+      }),
     };
 
     const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
@@ -178,12 +177,12 @@ describe('buildAudit', () => {
   });
 
   test('collects a warning and continues when a project role listing fails', async () => {
-    const client: JiraClient = {
-      getJson: vi.fn(async (p: string) => {
+    const client = {
+      getJson: vi.fn(async (p) => {
         if (p.includes('/project/search')) return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
         if (p.includes('/project/AAA/role')) throw new Error('boom 403');
         throw new Error(`no route for ${p}`);
-      }) as unknown as JiraClient['getJson'],
+      }),
     };
     const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
     expect(data.users).toEqual([]);

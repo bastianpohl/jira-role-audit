@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { renderHtml } from './render';
-import type { AuditData } from './auditTypes';
+import { renderHtml } from './render.js';
 
-const data: AuditData = {
+const data = {
   generatedAt: '2026-07-29T10:00:00Z',
   baseUrl: 'https://acme.atlassian.net',
   users: [
@@ -30,12 +29,12 @@ describe('renderHtml', () => {
     const html = renderHtml(data);
     const match = html.match(/<script id="audit-data" type="application\/json">([\s\S]*?)<\/script>/);
     expect(match).not.toBeNull();
-    const parsed = JSON.parse(match![1]);
+    const parsed = JSON.parse(match[1]);
     expect(parsed.users[0].displayName).toBe('Alice');
   });
 
   test('escapes the closing script sequence to prevent breakout', () => {
-    const evil: AuditData = {
+    const evil = {
       ...data,
       users: [{ ...data.users[0], displayName: 'x</script><script>alert(1)</script>' }],
     };

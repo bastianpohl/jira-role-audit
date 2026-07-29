@@ -1,11 +1,18 @@
-import type { AuditData } from './auditTypes';
-
-function embedJson(data: AuditData): string {
+/**
+ * @param {import('./invert.js').AuditData} data
+ * @returns {string}
+ */
+function embedJson(data) {
   // Escape "<" so "</script>" inside strings cannot close the tag.
   return JSON.stringify(data).replace(/</g, '\\u003c');
 }
 
-export function renderHtml(data: AuditData): string {
+/**
+ * Render the audit data into a single self-contained HTML document.
+ * @param {import('./invert.js').AuditData} data
+ * @returns {string}
+ */
+export function renderHtml(data) {
   const json = embedJson(data);
   return `<!doctype html>
 <html lang="de">

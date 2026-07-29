@@ -1,10 +1,10 @@
 import { writeFile } from 'node:fs/promises';
-import { loadConfig } from './config';
-import { createJiraClient } from './jiraClient';
-import { buildAudit } from './fetchAudit';
-import { renderHtml } from './render';
+import { loadConfig } from './config.js';
+import { createJiraClient } from './jiraClient.js';
+import { buildAudit } from './fetchAudit.js';
+import { renderHtml } from './render.js';
 
-async function main(): Promise<void> {
+async function main() {
   const config = loadConfig();
   const client = createJiraClient(config);
 
@@ -22,6 +22,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(`Failed: ${(err as Error).message}`);
+  console.error(`Failed: ${err.message}`);
   process.exitCode = 1;
 });

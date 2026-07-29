@@ -4,9 +4,11 @@ Generates a single self-contained HTML report showing which Jira Cloud users hol
 which project roles in which projects ("Bereiche"). Group role members are resolved
 into individual users.
 
+Plain Node.js (JavaScript, ES modules) — no build step, run directly with `node`.
+
 ## Requirements
 
-- Node ≥ 18
+- Node ≥ 18 (uses the built-in global `fetch`)
 - A Jira Cloud **service user** with an API token. The user needs *Administer Jira*
   (or at least Browse permission on every project you want audited) — missing
   permissions mean missing Bereiche in the report.
@@ -27,7 +29,7 @@ cp .env.example .env   # then fill in the three values
 ## Run
 
 ```bash
-npm start
+npm start          # or: node src/main.js
 ```
 
 Writes `jira-role-audit.html` (override with `OUTPUT_FILE=path npm start`). Open it in

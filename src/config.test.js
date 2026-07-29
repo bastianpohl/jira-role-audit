@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { loadConfig } from './config';
+import { loadConfig } from './config.js';
 
 const base = {
   JIRA_BASE_URL: 'https://acme.atlassian.net/',

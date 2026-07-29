@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { invertAssignments } from './invert';
-import type { RawAssignment } from './auditTypes';
+import { invertAssignments } from './invert.js';
 
 const meta = { generatedAt: '2026-07-29T00:00:00Z', baseUrl: 'https://acme.atlassian.net' };
 
-function raw(partial: Partial<RawAssignment>): RawAssignment {
+function raw(partial) {
   return {
     projectKey: 'AAA',
     projectName: 'Alpha',

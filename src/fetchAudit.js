@@ -55,6 +55,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     try {
       detail = await client.getJson(`/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`);
     } catch (err) {
+      if (err.fatal) throw err;
       warnings.push(`User ${accountId}: ${err.message}`);
       detail = { accountId, displayName: fallbackName, emailAddress: null };
     }
@@ -72,6 +73,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     try {
       roleMap = await client.getJson(`/rest/api/3/project/${encodeURIComponent(project.key)}/role`);
     } catch (err) {
+      if (err.fatal) throw err;
       warnings.push(`Project ${project.key} roles: ${err.message}`);
       continue;
     }
@@ -89,6 +91,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
           `/rest/api/3/project/${encodeURIComponent(project.key)}/role/${roleId}`,
         );
       } catch (err) {
+        if (err.fatal) throw err;
         warnings.push(`Project ${project.key} role ${roleName}: ${err.message}`);
         continue;
       }
@@ -124,6 +127,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
             warnings.push(`Project ${project.key} role ${roleName}: unhandled actor type ${actor.type}`);
           }
         } catch (err) {
+          if (err.fatal) throw err;
           if (actor.actorGroup) {
             const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
             warnings.push(`Project ${project.key} role ${roleName} group ${groupName}: ${err.message}`);

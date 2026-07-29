@@ -44,6 +44,14 @@ export function createJiraClient(config, opts = {}) {
         continue;
       }
 
+      if (res.status === 401) {
+        const err = new Error(
+          `Jira API 401 ${res.statusText} for ${url} — the OAuth access token is invalid or expired.`,
+        );
+        err.fatal = true;
+        throw err;
+      }
+
       if (!res.ok) {
         throw new Error(`Jira API ${res.status} ${res.statusText} for ${url}`);
       }

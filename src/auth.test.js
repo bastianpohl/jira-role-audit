@@ -29,11 +29,10 @@ describe('fetchAccessToken', () => {
     expect(init.method).toBe('POST');
 
     const sent = JSON.parse(init.body);
-    expect(sent).toMatchObject({
+    expect(sent).toEqual({
       grant_type: 'client_credentials',
       client_id: 'cid123',
       client_secret: 'secret456',
-      audience: 'api.atlassian.com',
     });
   });
 
@@ -46,9 +45,34 @@ describe('fetchAccessToken', () => {
 
   test('does not leak the client secret in the error message', async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
-    await expect(fetchAccessToken(cfg, { fetchFn })).rejects.toThrow(
-      expect.not.stringContaining('secret456'),
+    const err = await fetchAccessToken(cfg, { fetchFn }).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).not.toContain('secret456');
+    expect(err.stack ?? '').not.toContain('secret456');
+  });
+
+  test('surfaces the response body detail when the token endpoint rejects the credentials', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { error: 'invalid_client', error_description: 'Unknown client id' },
+        { status: 401 },
+      ),
     );
+    const err = await fetchAccessToken(cfg, { fetchFn }).then(() => null, (e) => e);
+    expect(err.message).toMatch(/invalid_client/);
+    expect(err.message).toMatch(/Unknown client id/);
+  });
+
+  test('throws a clear error when the token endpoint returns 200 with a non-JSON body', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response('<html>Not JSON</html>', { status: 200, headers: { 'Content-Type': 'text/html' } }),
+    );
+    await expect(fetchAccessToken(cfg, { fetchFn })).rejects.toThrow(/JSON/i);
+  });
+
+  test('rejects when the response is 200 but contains no access_token', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ token_type: 'Bearer' }));
+    await expect(fetchAccessToken(cfg, { fetchFn })).rejects.toThrow(/access_token/);
   });
 });
 
@@ -95,6 +119,29 @@ describe('resolveCloudId', () => {
   test('throws when the credential can reach no sites at all', async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse([]));
     await expect(resolveCloudId(cfg, 'tok', { fetchFn })).rejects.toThrow(/no accessible/i);
+  });
+
+  test('throws a distinct message when the accessible-resources response is not an array', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ error: 'nope' }));
+    await expect(resolveCloudId(cfg, 'tok', { fetchFn })).rejects.toThrow(/unexpected/i);
+  });
+
+  test('matches the accessible resource url case-insensitively', async () => {
+    const mixedCaseCfg = { ...cfg, baseUrl: 'https://ACME.atlassian.net' };
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(jsonResponse([{ id: 'cloud-acme', url: 'https://acme.atlassian.net' }]));
+    await expect(resolveCloudId(mixedCaseCfg, 'tok', { fetchFn })).resolves.toBe('cloud-acme');
+  });
+
+  test('throws a clear error when the matched resource has no id', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse([{ url: 'https://acme.atlassian.net' }]));
+    await expect(resolveCloudId(cfg, 'tok', { fetchFn })).rejects.toThrow(/id/i);
+  });
+
+  test('propagates a non-2xx response from accessible-resources', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 500 }));
+    await expect(resolveCloudId(cfg, 'tok', { fetchFn })).rejects.toThrow(/500/);
   });
 });
 

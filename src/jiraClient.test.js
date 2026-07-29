@@ -42,6 +42,24 @@ describe('createJiraClient.getJson', () => {
     const client = createJiraClient(cfg, { fetchFn });
     await expect(client.getJson('/x')).rejects.toThrow(/403/);
   });
+
+  test('throws a fatal error on 401 so an expired/invalid token cannot be silently swallowed', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
+    const client = createJiraClient(cfg, { fetchFn });
+    const err = await client.getJson('/x').then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.fatal).toBe(true);
+    expect(err.message).toMatch(/401/);
+    expect(err.message).toMatch(/token/i);
+  });
+
+  test('does not mark a 403 as fatal (per-project permission gaps are legitimate warnings)', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 403 }));
+    const client = createJiraClient(cfg, { fetchFn });
+    const err = await client.getJson('/x').then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.fatal).toBeFalsy();
+  });
 });
 
 describe('fetchAllPages', () => {

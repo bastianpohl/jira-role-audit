@@ -2,9 +2,12 @@ const TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 const ACCESSIBLE_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessible-resources';
 const API_GATEWAY = 'https://api.atlassian.com/ex/jira';
 
-/** Strip trailing slashes so site URLs compare equal regardless of formatting. */
+/** Strip trailing slashes and lowercase so site URLs compare equal regardless of
+ * formatting or the casing Atlassian happens to echo back. */
 function normalizeUrl(url) {
-  return String(url ?? '').replace(/\/+$/, '');
+  return String(url ?? '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
 }
 
 /**
@@ -24,18 +27,29 @@ export async function fetchAccessToken(config, opts = {}) {
       grant_type: 'client_credentials',
       client_id: config.clientId,
       client_secret: config.clientSecret,
-      audience: 'api.atlassian.com',
     }),
   });
 
   if (!res.ok) {
+    // The response body never echoes the secret back, so it's safe to surface —
+    // and it's the only actionable detail auth.atlassian.com gives us
+    // (e.g. {"error":"invalid_client","error_description":"..."}).
+    const bodyText = await res.text().catch(() => '');
     throw new Error(
-      `OAuth token request failed: ${res.status} ${res.statusText}. ` +
-        'Check JIRA_CLIENT_ID / JIRA_CLIENT_SECRET and the credential\'s scopes.',
+      `OAuth token request failed: ${res.status} ${res.statusText}` +
+        (bodyText ? ` — ${bodyText}` : '') +
+        '. Check JIRA_CLIENT_ID / JIRA_CLIENT_SECRET and the credential\'s scopes.',
     );
   }
 
-  const body = await res.json();
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(
+      'OAuth token response was not valid JSON (the endpoint may be returning an HTML error page).',
+    );
+  }
   if (!body.access_token) {
     throw new Error('OAuth token response contained no access_token.');
   }
@@ -63,7 +77,12 @@ export async function resolveCloudId(config, accessToken, opts = {}) {
   }
 
   const resources = await res.json();
-  if (!Array.isArray(resources) || resources.length === 0) {
+  if (!Array.isArray(resources)) {
+    throw new Error(
+      'Unexpected response shape from accessible-resources: expected an array of sites.',
+    );
+  }
+  if (resources.length === 0) {
     throw new Error(
       'The service account has no accessible Jira sites. Grant it access to the site and ' +
         'ensure the OAuth credential has Jira scopes.',
@@ -77,6 +96,11 @@ export async function resolveCloudId(config, accessToken, opts = {}) {
     throw new Error(
       `No accessible Jira site matches JIRA_BASE_URL (${wanted}). Available: ${available}. ` +
         'Fix JIRA_BASE_URL or set JIRA_CLOUD_ID explicitly.',
+    );
+  }
+  if (!match.id) {
+    throw new Error(
+      `The matched accessible-resources entry for ${wanted} has no id — cannot build the API gateway URL.`,
     );
   }
   return match.id;

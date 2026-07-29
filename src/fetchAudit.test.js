@@ -40,6 +40,40 @@ describe('buildAudit', () => {
     });
   });
 
+  test('requests role details as a relative gateway path, not the site-absolute url Jira returns', async () => {
+    // Jira returns role URLs pointing at the site (acme.atlassian.net). Those are not
+    // reachable with an OAuth bearer token, which must go through api.atlassian.com.
+    // The client only knows the gateway base, so buildAudit has to pass a relative path.
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/role/10': {
+        actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+      },
+      '/user?accountId=u1': { accountId: 'u1', displayName: 'Alice', emailAddress: 'alice@acme.com' },
+    });
+
+    await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    const requested = client.getJson.mock.calls.map((c) => c[0]);
+    expect(requested).toContain('/rest/api/3/project/AAA/role/10');
+    expect(requested.every((p) => !p.startsWith('http'))).toBe(true);
+  });
+
+  test('warns and skips a role whose url carries no extractable role id', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'not-a-role-url' },
+    });
+
+    const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    expect(data.users).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/AAA/);
+    expect(warnings[0]).toMatch(/Member/);
+  });
+
   test('expands group actors into members and caches group lookups', async () => {
     const client = mockClient({
       '/project/search': {

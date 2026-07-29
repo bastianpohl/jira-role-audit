@@ -121,8 +121,19 @@ npm start          # or: node src/main.js
 ```
 
 Writes `jira-role-audit.html` (override with `OUTPUT_FILE=path npm start`). Open it in
-a browser: overview table (Name, E-Mail, Anzahl Bereiche) with search/sort, click a
-row for the per-user detail view (Projekt, Key, Rolle, Zugriffsweg).
+a browser:
+
+- overview table (Name, E-Mail, Anzahl Bereiche), sortable by clicking a header
+- filter by name/e-mail, and by a min/max range on **Anzahl Bereiche** — useful for
+  finding the accounts with unusually broad access
+- below the table, how many entries are shown out of the total
+- click a row for the per-user detail view (Projekt, Key, Rolle, Zugriffsweg)
+- banners at the top state whose view the report reflects, and name any projects
+  that could not be read fully
+
+**The report contains real names and e-mail addresses.** `.gitignore` covers `*.html`
+and `out/`; if `OUTPUT_FILE` points anywhere else, the run prints a warning, because
+the file would not be ignored.
 
 ## Test
 

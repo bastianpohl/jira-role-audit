@@ -64,6 +64,14 @@ describe('renderHtml', () => {
     expect(html).toMatch(/id="gap-banner" class="banner banner-gap hidden"/);
   });
 
+  test('ships the area-count filter controls and the result counter', () => {
+    const html = renderHtml(data);
+    expect(html).toContain('id="min-areas"');
+    expect(html).toContain('id="max-areas"');
+    expect(html).toContain('id="reset"');
+    expect(html).toContain('id="count"');
+  });
+
   test('escapes the closing script sequence to prevent breakout', () => {
     const evil = {
       ...data,

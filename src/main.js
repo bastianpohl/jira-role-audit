@@ -32,6 +32,21 @@ async function createAuthenticatedClient(config) {
   );
 }
 
+/**
+ * The report lists real names and e-mail addresses, so it must never be committed.
+ * .gitignore covers `*.html` and `out/`; anything else is the user's own path and
+ * worth flagging out loud rather than trusting.
+ * @param {string} outPath
+ */
+function warnIfNotGitIgnored(outPath) {
+  const covered = outPath.endsWith('.html') || /^(\.\/)?out\//.test(outPath);
+  if (covered) return;
+  console.warn(
+    `\nWARNING: ${outPath} matches neither *.html nor out/ in .gitignore. The report ` +
+      'contains real names and e-mail addresses — make sure it does not get committed.',
+  );
+}
+
 async function main() {
   const config = loadConfig();
 
@@ -43,6 +58,7 @@ async function main() {
   const { data, warnings } = await buildAudit(client, config.baseUrl, { identity });
 
   const outPath = process.env.OUTPUT_FILE ?? 'jira-role-audit.html';
+  warnIfNotGitIgnored(outPath);
   await writeFile(outPath, renderHtml(data), 'utf8');
 
   console.log(`Wrote ${outPath} — ${data.users.length} users across their Bereiche.`);

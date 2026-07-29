@@ -25,7 +25,12 @@ export function renderHtml(data) {
   body { margin: 0; padding: 1.5rem; }
   h1 { font-size: 1.3rem; }
   .meta { color: #888; font-size: .85rem; margin-bottom: 1rem; }
-  input[type=search] { padding: .4rem .6rem; width: 100%; max-width: 320px; margin-bottom: 1rem; }
+  input[type=search] { padding: .4rem .6rem; flex: 1 1 220px; max-width: 320px; }
+  input[type=number] { padding: .4rem .5rem; width: 5.5rem; }
+  .controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; }
+  .controls label { display: inline-flex; align-items: center; gap: .35rem; font-size: .9rem; }
+  .controls button { padding: .4rem .7rem; cursor: pointer; }
+  #count { margin-top: .75rem; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid #8884; }
   th { cursor: pointer; user-select: none; }
@@ -51,7 +56,14 @@ export function renderHtml(data) {
 <div id="scope-banner" class="banner banner-scope"></div>
 
 <section id="overview">
-  <input type="search" id="filter" placeholder="Nach Name oder E-Mail filtern…">
+  <div class="controls">
+    <input type="search" id="filter" placeholder="Nach Name oder E-Mail filtern…">
+    <label for="min-areas">Bereiche von</label>
+    <input type="number" id="min-areas" min="0" step="1" inputmode="numeric" placeholder="min">
+    <label for="max-areas">bis</label>
+    <input type="number" id="max-areas" min="0" step="1" inputmode="numeric" placeholder="max">
+    <button type="button" id="reset">Filter zurücksetzen</button>
+  </div>
   <table>
     <thead><tr>
       <th data-sort="displayName">Name</th>
@@ -60,6 +72,7 @@ export function renderHtml(data) {
     </tr></thead>
     <tbody id="overview-body"></tbody>
   </table>
+  <div class="meta" id="count"></div>
 </section>
 
 <section id="detail" class="hidden">
@@ -83,6 +96,17 @@ export function renderHtml(data) {
   let sortKey = 'displayName';
   let sortDir = 1;
   let filter = '';
+  let minAreas = null;
+  let maxAreas = null;
+
+  // Empty and non-numeric both mean "no bound" — a half-typed value must not
+  // silently hide rows.
+  function readBound(id) {
+    const raw = document.getElementById(id).value.trim();
+    if (raw === '') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
 
   function gapList(title, gaps) {
     if (gaps.length === 0) return '';
@@ -138,7 +162,10 @@ export function renderHtml(data) {
     const rows = data.users
       .filter((u) => {
         const hay = (u.displayName + ' ' + (u.emailAddress || '')).toLowerCase();
-        return hay.includes(filter);
+        if (!hay.includes(filter)) return false;
+        if (minAreas !== null && u.areaCount < minAreas) return false;
+        if (maxAreas !== null && u.areaCount > maxAreas) return false;
+        return true;
       })
       .sort((a, b) => {
         const av = a[sortKey], bv = b[sortKey];
@@ -152,6 +179,11 @@ export function renderHtml(data) {
         '<td>' + (u.emailAddress ? esc(u.emailAddress) : '—') + '</td>' +
         '<td class="num">' + u.areaCount + '</td></tr>')
       .join('');
+
+    const total = data.users.length;
+    const noun = total === 1 ? 'Benutzer' : 'Benutzern';
+    document.getElementById('count').textContent =
+      rows.length + ' von ' + total + ' ' + noun + ' angezeigt';
   }
 
   function showDetail(accountId) {
@@ -181,6 +213,22 @@ export function renderHtml(data) {
   document.getElementById('back').addEventListener('click', showOverview);
   document.getElementById('filter').addEventListener('input', (e) => {
     filter = e.target.value.toLowerCase();
+    renderOverview();
+  });
+  ['min-areas', 'max-areas'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => {
+      minAreas = readBound('min-areas');
+      maxAreas = readBound('max-areas');
+      renderOverview();
+    });
+  });
+  document.getElementById('reset').addEventListener('click', () => {
+    document.getElementById('filter').value = '';
+    document.getElementById('min-areas').value = '';
+    document.getElementById('max-areas').value = '';
+    filter = '';
+    minAreas = null;
+    maxAreas = null;
     renderOverview();
   });
   document.querySelectorAll('th[data-sort]').forEach((th) => {

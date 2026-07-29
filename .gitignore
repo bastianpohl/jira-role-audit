@@ -1,4 +1,8 @@
 .env
 node_modules/
-*.html
 .DS_Store
+
+# Generated reports contain real names and e-mail addresses — never commit them.
+# main.js warns at runtime if OUTPUT_FILE falls outside these patterns.
+*.html
+out/

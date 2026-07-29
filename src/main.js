@@ -12,7 +12,11 @@ async function main() {
   const accessToken = await fetchAccessToken(config);
   const cloudId = await resolveCloudId(config, accessToken);
 
-  const client = createJiraClient({ apiBaseUrl: apiBaseUrlFor(cloudId), accessToken });
+  const client = createJiraClient(
+    { apiBaseUrl: apiBaseUrlFor(cloudId), accessToken },
+    // Audits of large sites can outlive the 60-minute token; re-mint it on demand.
+    { refreshAccessToken: () => fetchAccessToken(config) },
+  );
 
   console.log(`Fetching Jira audit data from ${config.baseUrl} (cloudId ${cloudId}) …`);
   const { data, warnings } = await buildAudit(client, config.baseUrl);

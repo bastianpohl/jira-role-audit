@@ -8,6 +8,19 @@ import { fetchAllPages } from './jiraClient.js';
  */
 
 /**
+ * Jira returns role URLs pointing at the site (…atlassian.net/…/role/10), which an
+ * OAuth bearer token cannot call — those requests must go through the api.atlassian.com
+ * gateway. Extract the role id so we can build a relative path the client resolves
+ * against the gateway base URL.
+ * @param {string} roleUrl
+ * @returns {string|null}
+ */
+function roleIdFromUrl(roleUrl) {
+  const match = /\/role\/(\d+)\/?$/.exec(String(roleUrl ?? ''));
+  return match ? match[1] : null;
+}
+
+/**
  * Fetch projects -> roles -> actors from Jira, resolve group/user actors
  * (with caching, warn-and-continue on failures), and invert to a user view.
  * @param {import('./jiraClient.js').JiraClient} client
@@ -42,6 +55,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     try {
       detail = await client.getJson(`/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`);
     } catch (err) {
+      if (err.fatal) throw err;
       warnings.push(`User ${accountId}: ${err.message}`);
       detail = { accountId, displayName: fallbackName, emailAddress: null };
     }
@@ -59,15 +73,25 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     try {
       roleMap = await client.getJson(`/rest/api/3/project/${encodeURIComponent(project.key)}/role`);
     } catch (err) {
+      if (err.fatal) throw err;
       warnings.push(`Project ${project.key} roles: ${err.message}`);
       continue;
     }
 
     for (const [roleName, roleUrl] of Object.entries(roleMap)) {
+      const roleId = roleIdFromUrl(roleUrl);
+      if (!roleId) {
+        warnings.push(`Project ${project.key} role ${roleName}: could not parse role id from ${roleUrl}`);
+        continue;
+      }
+
       let roleDetail;
       try {
-        roleDetail = await client.getJson(roleUrl);
+        roleDetail = await client.getJson(
+          `/rest/api/3/project/${encodeURIComponent(project.key)}/role/${roleId}`,
+        );
       } catch (err) {
+        if (err.fatal) throw err;
         warnings.push(`Project ${project.key} role ${roleName}: ${err.message}`);
         continue;
       }
@@ -103,6 +127,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
             warnings.push(`Project ${project.key} role ${roleName}: unhandled actor type ${actor.type}`);
           }
         } catch (err) {
+          if (err.fatal) throw err;
           if (actor.actorGroup) {
             const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
             warnings.push(`Project ${project.key} role ${roleName} group ${groupName}: ${err.message}`);

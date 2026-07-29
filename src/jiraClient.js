@@ -11,8 +11,14 @@
  */
 
 /**
- * Create a thin Jira REST client: Basic auth, 429-retry with backoff, JSON parsing.
- * @param {import('./config.js').Config} config
+ * @typedef {object} ClientAuth
+ * @property {string} apiBaseUrl  e.g. https://api.atlassian.com/ex/jira/{cloudId}
+ * @property {string} accessToken OAuth 2.0 bearer token
+ */
+
+/**
+ * Create a thin Jira REST client: bearer auth, 429-retry with backoff, JSON parsing.
+ * @param {ClientAuth} config
  * @param {ClientOptions} [opts]
  * @returns {JiraClient}
  */
@@ -22,10 +28,10 @@ export function createJiraClient(config, opts = {}) {
   const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
 
   async function getJson(pathOrUrl) {
-    const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${config.baseUrl}${pathOrUrl}`;
+    const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${config.apiBaseUrl}${pathOrUrl}`;
     for (let attempt = 0; ; attempt++) {
       const res = await fetchFn(url, {
-        headers: { Authorization: config.authHeader, Accept: 'application/json' },
+        headers: { Authorization: `Bearer ${config.accessToken}`, Accept: 'application/json' },
       });
 
       if (res.status === 429 && attempt < maxRetries) {
@@ -36,6 +42,14 @@ export function createJiraClient(config, opts = {}) {
             : Math.min(1000 * 2 ** attempt, 30000);
         await sleep(delayMs);
         continue;
+      }
+
+      if (res.status === 401) {
+        const err = new Error(
+          `Jira API 401 ${res.statusText} for ${url} — the OAuth access token is invalid or expired.`,
+        );
+        err.fatal = true;
+        throw err;
       }
 
       if (!res.ok) {

@@ -40,6 +40,40 @@ describe('buildAudit', () => {
     });
   });
 
+  test('requests role details as a relative gateway path, not the site-absolute url Jira returns', async () => {
+    // Jira returns role URLs pointing at the site (acme.atlassian.net). Those are not
+    // reachable with an OAuth bearer token, which must go through api.atlassian.com.
+    // The client only knows the gateway base, so buildAudit has to pass a relative path.
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/role/10': {
+        actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+      },
+      '/user?accountId=u1': { accountId: 'u1', displayName: 'Alice', emailAddress: 'alice@acme.com' },
+    });
+
+    await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    const requested = client.getJson.mock.calls.map((c) => c[0]);
+    expect(requested).toContain('/rest/api/3/project/AAA/role/10');
+    expect(requested.every((p) => !p.startsWith('http'))).toBe(true);
+  });
+
+  test('warns and skips a role whose url carries no extractable role id', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'not-a-role-url' },
+    });
+
+    const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    expect(data.users).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/AAA/);
+    expect(warnings[0]).toMatch(/Member/);
+  });
+
   test('expands group actors into members and caches group lookups', async () => {
     const client = mockClient({
       '/project/search': {
@@ -188,6 +222,89 @@ describe('buildAudit', () => {
     expect(data.users).toEqual([]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/AAA/);
+  });
+
+  test('rejects (does not warn-and-continue) when a role detail call fails with a fatal error', async () => {
+    const fatal = new Error('Jira API 401 Unauthorized — token invalid or expired');
+    fatal.fatal = true;
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role/10')) throw fatal;
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    await expect(buildAudit(client, 'https://acme.atlassian.net', { now })).rejects.toBe(fatal);
+  });
+
+  test('rejects when a project role-map call fails with a fatal error', async () => {
+    const fatal = new Error('Jira API 401 Unauthorized — token invalid or expired');
+    fatal.fatal = true;
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role')) throw fatal;
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    await expect(buildAudit(client, 'https://acme.atlassian.net', { now })).rejects.toBe(fatal);
+  });
+
+  test('rejects when a per-actor (group) lookup fails with a fatal error', async () => {
+    const fatal = new Error('Jira API 401 Unauthorized — token invalid or expired');
+    fatal.fatal = true;
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role/10')) {
+          return {
+            actors: [{ type: 'atlassian-group-role-actor', actorGroup: { name: 'devs', displayName: 'devs', groupId: 'g1' } }],
+          };
+        }
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        if (p.includes('/group/member')) throw fatal;
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    await expect(buildAudit(client, 'https://acme.atlassian.net', { now })).rejects.toBe(fatal);
+  });
+
+  test('rejects when resolveUser fails with a fatal error', async () => {
+    const fatal = new Error('Jira API 401 Unauthorized — token invalid or expired');
+    fatal.fatal = true;
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role/10')) {
+          return {
+            actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+          };
+        }
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        if (p.includes('/user?accountId=u1')) throw fatal;
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    await expect(buildAudit(client, 'https://acme.atlassian.net', { now })).rejects.toBe(fatal);
   });
 
   test('warns and continues when a role actor has an unhandled type', async () => {

@@ -2,10 +2,8 @@ import { describe, expect, test, vi } from 'vitest';
 import { createJiraClient, fetchAllPages } from './jiraClient.js';
 
 const cfg = {
-  baseUrl: 'https://acme.atlassian.net',
-  email: 'svc@acme.com',
-  apiToken: 'tok',
-  authHeader: 'Basic xyz',
+  apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-acme',
+  accessToken: 'tok-abc',
 };
 
 function jsonResponse(body, init = {}) {
@@ -16,14 +14,14 @@ function jsonResponse(body, init = {}) {
 }
 
 describe('createJiraClient.getJson', () => {
-  test('sends auth header and resolves relative path against baseUrl', async () => {
+  test('sends a bearer token and resolves paths against the api gateway base url', async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
     const client = createJiraClient(cfg, { fetchFn });
     const result = await client.getJson('/rest/api/3/myself');
     expect(result).toEqual({ ok: true });
     const [url, init] = fetchFn.mock.calls[0];
-    expect(url).toBe('https://acme.atlassian.net/rest/api/3/myself');
-    expect(init.headers).toMatchObject({ Authorization: 'Basic xyz' });
+    expect(url).toBe('https://api.atlassian.com/ex/jira/cloud-acme/rest/api/3/myself');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer tok-abc' });
   });
 
   test('retries on 429 honoring Retry-After then succeeds', async () => {
@@ -43,6 +41,24 @@ describe('createJiraClient.getJson', () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 403 }));
     const client = createJiraClient(cfg, { fetchFn });
     await expect(client.getJson('/x')).rejects.toThrow(/403/);
+  });
+
+  test('throws a fatal error on 401 so an expired/invalid token cannot be silently swallowed', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
+    const client = createJiraClient(cfg, { fetchFn });
+    const err = await client.getJson('/x').then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.fatal).toBe(true);
+    expect(err.message).toMatch(/401/);
+    expect(err.message).toMatch(/token/i);
+  });
+
+  test('does not mark a 403 as fatal (per-project permission gaps are legitimate warnings)', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 403 }));
+    const client = createJiraClient(cfg, { fetchFn });
+    const err = await client.getJson('/x').then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.fatal).toBeFalsy();
   });
 });
 

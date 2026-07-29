@@ -97,30 +97,40 @@ export async function buildAudit(
       }
 
       for (const actor of roleDetail.actors ?? []) {
-        if (actor.type === 'atlassian-user-role-actor' && actor.actorUser) {
-          const user = await resolveUser(actor.actorUser.accountId, actor.displayName ?? actor.actorUser.accountId);
-          raws.push({
-            projectKey: project.key,
-            projectName: project.name,
-            roleName,
-            accountId: user.accountId,
-            displayName: user.displayName,
-            emailAddress: user.emailAddress ?? null,
-            via: { kind: 'direct' },
-          });
-        } else if (actor.type === 'atlassian-group-role-actor' && actor.actorGroup) {
-          const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
-          const members = await resolveGroup(actor.actorGroup.groupId);
-          for (const member of members) {
+        try {
+          if (actor.type === 'atlassian-user-role-actor' && actor.actorUser) {
+            const user = await resolveUser(actor.actorUser.accountId, actor.displayName ?? actor.actorUser.accountId);
             raws.push({
               projectKey: project.key,
               projectName: project.name,
               roleName,
-              accountId: member.accountId,
-              displayName: member.displayName,
-              emailAddress: member.emailAddress ?? null,
-              via: { kind: 'group', groupName },
+              accountId: user.accountId,
+              displayName: user.displayName,
+              emailAddress: user.emailAddress ?? null,
+              via: { kind: 'direct' },
             });
+          } else if (actor.type === 'atlassian-group-role-actor' && actor.actorGroup) {
+            const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
+            const members = await resolveGroup(actor.actorGroup.groupId);
+            for (const member of members) {
+              raws.push({
+                projectKey: project.key,
+                projectName: project.name,
+                roleName,
+                accountId: member.accountId,
+                displayName: member.displayName,
+                emailAddress: member.emailAddress ?? null,
+                via: { kind: 'group', groupName },
+              });
+            }
+          }
+        } catch (err) {
+          if (actor.actorGroup) {
+            const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
+            warnings.push(`Project ${project.key} role ${roleName} group ${groupName}: ${(err as Error).message}`);
+          } else {
+            const actorLabel = actor.actorUser?.accountId ?? actor.displayName ?? 'unknown actor';
+            warnings.push(`Project ${project.key} role ${roleName} actor ${actorLabel}: ${(err as Error).message}`);
           }
         }
       }

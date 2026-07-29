@@ -73,6 +73,106 @@ describe('buildAudit', () => {
     expect(calls.filter((c) => c.includes('/group/member?groupId=g1'))).toHaveLength(1);
   });
 
+  test('collects a warning and continues when a group actor lookup fails, without aborting the whole audit', async () => {
+    const client: JiraClient = {
+      getJson: vi.fn(async (p: string) => {
+        if (p.includes('/project/search')) {
+          return {
+            values: [
+              { id: '1', key: 'AAA', name: 'Alpha' },
+              { id: '2', key: 'BBB', name: 'Beta' },
+            ],
+            isLast: true,
+          };
+        }
+        if (p.includes('/project/AAA/role/10')) {
+          return {
+            actors: [{ type: 'atlassian-group-role-actor', actorGroup: { name: 'devs', displayName: 'devs', groupId: 'g1' } }],
+          };
+        }
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        if (p.includes('/project/BBB/role/20')) {
+          return {
+            actors: [{ type: 'atlassian-user-role-actor', displayName: 'Bob', actorUser: { accountId: 'u2' } }],
+          };
+        }
+        if (p.includes('/project/BBB/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/BBB/role/20' };
+        }
+        if (p.includes('/group/member')) throw new Error('group boom 403');
+        if (p.includes('/user?accountId=u2')) {
+          return { accountId: 'u2', displayName: 'Bob', emailAddress: 'bob@acme.com' };
+        }
+        throw new Error(`no route for ${p}`);
+      }) as unknown as JiraClient['getJson'],
+    };
+
+    const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    // The successfully-resolved user from project BBB must still be present.
+    expect(data.users).toHaveLength(1);
+    expect(data.users[0].displayName).toBe('Bob');
+
+    // The failing group lookup from project AAA must be recorded as a warning, not thrown.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/AAA/);
+    expect(warnings[0]).toMatch(/Member/);
+    expect(warnings[0]).toMatch(/devs/);
+  });
+
+  test('collects a warning and falls back to null email when a direct user lookup fails, without aborting the run', async () => {
+    const client: JiraClient = {
+      getJson: vi.fn(async (p: string) => {
+        if (p.includes('/project/search')) {
+          return {
+            values: [
+              { id: '1', key: 'AAA', name: 'Alpha' },
+              { id: '2', key: 'BBB', name: 'Beta' },
+            ],
+            isLast: true,
+          };
+        }
+        if (p.includes('/project/AAA/role/10')) {
+          return {
+            actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+          };
+        }
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        if (p.includes('/project/BBB/role/20')) {
+          return {
+            actors: [{ type: 'atlassian-user-role-actor', displayName: 'Bob', actorUser: { accountId: 'u2' } }],
+          };
+        }
+        if (p.includes('/project/BBB/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/BBB/role/20' };
+        }
+        if (p.includes('/user?accountId=u1')) throw new Error('user boom 500');
+        if (p.includes('/user?accountId=u2')) {
+          return { accountId: 'u2', displayName: 'Bob', emailAddress: 'bob@acme.com' };
+        }
+        throw new Error(`no route for ${p}`);
+      }) as unknown as JiraClient['getJson'],
+    };
+
+    const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    // Both users still appear; the failing lookup falls back to null email instead of aborting.
+    expect(data.users).toHaveLength(2);
+    const alice = data.users.find((u) => u.accountId === 'u1');
+    const bob = data.users.find((u) => u.accountId === 'u2');
+    expect(alice).toBeDefined();
+    expect(alice?.emailAddress).toBeNull();
+    expect(alice?.displayName).toBe('Alice');
+    expect(bob?.emailAddress).toBe('bob@acme.com');
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/u1/);
+  });
+
   test('collects a warning and continues when a project role listing fails', async () => {
     const client: JiraClient = {
       getJson: vi.fn(async (p: string) => {

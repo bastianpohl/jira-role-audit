@@ -4,18 +4,17 @@ import type { JiraClient } from './jiraClient';
 
 // Router-style mock client keyed by URL/path substring.
 function mockClient(routes: Record<string, unknown>): JiraClient {
-  return {
-    getJson: vi.fn(async (p: string) => {
-      // Prefer the last-declared matching key, not the first, so a more
-      // specific route (e.g. '/role/10' or '/project/AAA/role/10',
-      // declared later) wins over a shorter route it happens to contain
-      // as a substring (e.g. '/project/AAA/role', declared earlier).
-      const matches = Object.keys(routes).filter((k) => p.includes(k));
-      const key = matches[matches.length - 1];
-      if (!key) throw new Error(`no route for ${p}`);
-      return routes[key];
-    }),
-  };
+  const getJson = vi.fn(async (p: string) => {
+    // Prefer the last-declared matching key, not the first, so a more
+    // specific route (e.g. '/role/10' or '/project/AAA/role/10',
+    // declared later) wins over a shorter route it happens to contain
+    // as a substring (e.g. '/project/AAA/role', declared earlier).
+    const matches = Object.keys(routes).filter((k) => p.includes(k));
+    const key = matches[matches.length - 1];
+    if (!key) throw new Error(`no route for ${p}`);
+    return routes[key];
+  });
+  return { getJson: getJson as unknown as JiraClient['getJson'] };
 }
 
 const now = () => new Date('2026-07-29T10:00:00Z');
@@ -80,7 +79,7 @@ describe('buildAudit', () => {
         if (p.includes('/project/search')) return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
         if (p.includes('/project/AAA/role')) throw new Error('boom 403');
         throw new Error(`no route for ${p}`);
-      }),
+      }) as unknown as JiraClient['getJson'],
     };
     const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
     expect(data.users).toEqual([]);

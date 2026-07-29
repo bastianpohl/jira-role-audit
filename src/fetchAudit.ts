@@ -53,7 +53,8 @@ export async function buildAudit(
     if (cached) return cached;
     const members = await fetchAllPages<GroupMember>(
       client,
-      (startAt) => `/rest/api/3/group/member?groupId=${encodeURIComponent(groupId)}&startAt=${startAt}`,
+      (startAt) =>
+        `/rest/api/3/group/member?groupId=${encodeURIComponent(groupId)}&startAt=${startAt}&includeInactiveUsers=true`,
     );
     groupCache.set(groupId, members);
     return members;
@@ -81,7 +82,9 @@ export async function buildAudit(
   for (const project of projects) {
     let roleMap: Record<string, string>;
     try {
-      roleMap = await client.getJson<Record<string, string>>(`/rest/api/3/project/${project.key}/role`);
+      roleMap = await client.getJson<Record<string, string>>(
+        `/rest/api/3/project/${encodeURIComponent(project.key)}/role`,
+      );
     } catch (err) {
       warnings.push(`Project ${project.key} roles: ${(err as Error).message}`);
       continue;
@@ -123,6 +126,8 @@ export async function buildAudit(
                 via: { kind: 'group', groupName },
               });
             }
+          } else {
+            warnings.push(`Project ${project.key} role ${roleName}: unhandled actor type ${actor.type}`);
           }
         } catch (err) {
           if (actor.actorGroup) {

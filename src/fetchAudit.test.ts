@@ -71,6 +71,10 @@ describe('buildAudit', () => {
     // group members fetched once despite two projects (cache)
     const calls = (client.getJson as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
     expect(calls.filter((c) => c.includes('/group/member?groupId=g1'))).toHaveLength(1);
+    // Jira's group-member endpoint defaults to excluding deactivated users; the audit
+    // must explicitly request them so offboarded-but-still-grouped accounts show up.
+    const groupMemberCall = calls.find((c) => c.includes('/group/member?groupId=g1'));
+    expect(groupMemberCall).toContain('includeInactiveUsers=true');
   });
 
   test('collects a warning and continues when a group actor lookup fails, without aborting the whole audit', async () => {
@@ -185,5 +189,25 @@ describe('buildAudit', () => {
     expect(data.users).toEqual([]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/AAA/);
+  });
+
+  test('warns and continues when a role actor has an unhandled type', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/role/10': {
+        actors: [{ type: 'atlassian-app-role-actor', displayName: 'Some App' }],
+      },
+    });
+
+    const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+
+    // The unhandled actor produces no user.
+    expect(data.users).toEqual([]);
+    // A warning is recorded identifying the project, role, and actor type.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/AAA/);
+    expect(warnings[0]).toMatch(/Member/);
+    expect(warnings[0]).toMatch(/atlassian-app-role-actor/);
   });
 });

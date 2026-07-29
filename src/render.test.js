@@ -33,6 +33,37 @@ describe('renderHtml', () => {
     expect(parsed.users[0].displayName).toBe('Alice');
   });
 
+  test('carries coverage and identity into the embedded JSON so the page can warn', () => {
+    const withGaps = {
+      ...data,
+      identity: 'admin@acme.example',
+      coverage: {
+        projectsVisible: 5,
+        projectsAudited: 3,
+        skippedProjects: [{ key: 'CCC', name: 'Gamma', reasons: ['role list unreadable: 403'] }],
+        partialProjects: [{ key: 'DDD', name: 'Delta', reasons: ['role Member: 403'] }],
+        warningCount: 2,
+        noKnownGaps: false,
+      },
+    };
+    const html = renderHtml(withGaps);
+    const parsed = JSON.parse(
+      html.match(/<script id="audit-data" type="application\/json">([\s\S]*?)<\/script>/)[1],
+    );
+    expect(parsed.coverage.noKnownGaps).toBe(false);
+    expect(parsed.coverage.skippedProjects[0].key).toBe('CCC');
+    expect(parsed.identity).toBe('admin@acme.example');
+  });
+
+  test('always ships the scope caveat and the gap banner element', () => {
+    const html = renderHtml(data);
+    expect(html).toContain('id="scope-banner"');
+    expect(html).toContain('id="gap-banner"');
+    expect(html).toMatch(/Geltungsbereich/);
+    // The gap banner starts hidden and is revealed only when coverage has gaps.
+    expect(html).toMatch(/id="gap-banner" class="banner banner-gap hidden"/);
+  });
+
   test('escapes the closing script sequence to prevent breakout', () => {
     const evil = {
       ...data,

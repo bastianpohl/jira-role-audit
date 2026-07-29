@@ -35,11 +35,20 @@ export function renderHtml(data) {
   .back { display: inline-block; margin-bottom: 1rem; cursor: pointer; color: #06c; }
   .hidden { display: none; }
   code { background: #8882; padding: 0 .3rem; border-radius: 3px; }
+  .banner { border-left: 4px solid; padding: .7rem 1rem; margin-bottom: 1rem; border-radius: 3px; }
+  .banner h2 { font-size: 1rem; margin: 0 0 .4rem; }
+  .banner ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .banner li { margin: .15rem 0; }
+  .banner .reason { color: #888; }
+  .banner-gap { border-color: #c62828; background: #c6282814; }
+  .banner-scope { border-color: #0288d1; background: #0288d114; }
 </style>
 </head>
 <body>
 <h1>Jira Rollen-/Bereichs-Report</h1>
 <div class="meta" id="meta"></div>
+<div id="gap-banner" class="banner banner-gap hidden"></div>
+<div id="scope-banner" class="banner banner-scope"></div>
 
 <section id="overview">
   <input type="search" id="filter" placeholder="Nach Name oder E-Mail filtern…">
@@ -74,6 +83,50 @@ export function renderHtml(data) {
   let sortKey = 'displayName';
   let sortDir = 1;
   let filter = '';
+
+  function gapList(title, gaps) {
+    if (gaps.length === 0) return '';
+    return '<div><strong>' + title + '</strong><ul>' + gaps
+      .map((g) =>
+        '<li><code>' + esc(g.key) + '</code> ' + esc(g.name) +
+        ' <span class="reason">— ' + esc(g.reasons.join('; ')) + '</span></li>')
+      .join('') + '</ul></div>';
+  }
+
+  // The report's completeness depends entirely on the acting account's permissions,
+  // so state the scope unconditionally and call out measurable gaps loudly.
+  function renderBanners() {
+    const cov = data.coverage;
+    const who = data.identity ? esc(data.identity) : 'dem verwendeten Konto';
+    const counts = cov
+      ? ' Gefunden: ' + cov.projectsVisible + ' Projekte, davon ' + cov.projectsAudited +
+        ' vollständig gelesen.'
+      : '';
+
+    document.getElementById('scope-banner').innerHTML =
+      '<h2>Geltungsbereich</h2>Dieser Report zeigt ausschließlich Projekte, die für ' + who +
+      ' sichtbar sind.' + counts +
+      ' Projekte ohne Leseberechtigung erscheinen nicht in der Jira-Projektsuche und können ' +
+      'hier deshalb auch nicht als fehlend ausgewiesen werden — für einen vollständigen Report ' +
+      'braucht das Konto die globale Berechtigung <em>Jira administrieren</em>.';
+
+    if (!cov || cov.noKnownGaps) return;
+
+    const banner = document.getElementById('gap-banner');
+    const skipped = cov.skippedProjects || [];
+    const partial = cov.partialProjects || [];
+    const headline = skipped.length > 0
+      ? skipped.length + ' Projekt(e) konnten nicht gelesen werden'
+      : partial.length + ' Projekt(e) sind unvollständig';
+
+    banner.innerHTML =
+      '<h2>⚠ Dieser Report ist unvollständig — ' + headline + '</h2>' +
+      'Die folgenden Zuordnungen fehlen. Behandle den Report nicht als vollständige ' +
+      'Rechteübersicht, bevor das geklärt ist.' +
+      gapList('Ohne jede Rollen-Information:', skipped) +
+      gapList('Teilweise gelesen:', partial);
+    banner.classList.remove('hidden');
+  }
 
   function viaLabel(via) {
     return via.kind === 'group'
@@ -138,6 +191,7 @@ export function renderHtml(data) {
     });
   });
 
+  renderBanners();
   renderOverview();
 })();
 </script>

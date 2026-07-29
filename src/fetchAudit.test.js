@@ -307,6 +307,114 @@ describe('buildAudit', () => {
     await expect(buildAudit(client, 'https://acme.atlassian.net', { now })).rejects.toBe(fatal);
   });
 
+  test('reports no known gaps and a full project count on a clean run', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/project/AAA/role/10': {
+        actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+      },
+      '/user?accountId=u1': { accountId: 'u1', displayName: 'Alice', emailAddress: 'a@acme.com' },
+    });
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.coverage.noKnownGaps).toBe(true);
+    expect(data.coverage.projectsVisible).toBe(1);
+    expect(data.coverage.projectsAudited).toBe(1);
+    expect(data.coverage.skippedProjects).toEqual([]);
+  });
+
+  test('records a project whose role list is refused as skipped, not merely as a warning', async () => {
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return {
+            values: [
+              { id: '1', key: 'AAA', name: 'Alpha' },
+              { id: '2', key: 'BBB', name: 'Beta' },
+            ],
+            isLast: true,
+          };
+        }
+        if (p.includes('/project/BBB/role')) throw new Error('Jira API 403 Forbidden');
+        if (p.includes('/project/AAA/role/10')) return { actors: [] };
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.coverage.noKnownGaps).toBe(false);
+    expect(data.coverage.projectsVisible).toBe(2);
+    expect(data.coverage.projectsAudited).toBe(1);
+    expect(data.coverage.skippedProjects).toHaveLength(1);
+    expect(data.coverage.skippedProjects[0]).toMatchObject({ key: 'BBB', name: 'Beta' });
+    expect(data.coverage.skippedProjects[0].reasons[0]).toMatch(/403/);
+  });
+
+  test('records a project as partial when one of several roles is refused', async () => {
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role/11')) throw new Error('Jira API 403 Forbidden');
+        if (p.includes('/project/AAA/role/10')) return { actors: [] };
+        if (p.includes('/project/AAA/role')) {
+          return {
+            Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10',
+            Admin: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/11',
+          };
+        }
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.coverage.skippedProjects).toEqual([]);
+    expect(data.coverage.partialProjects).toHaveLength(1);
+    expect(data.coverage.partialProjects[0].key).toBe('AAA');
+    // A partially read project still counts as audited — it did yield data.
+    expect(data.coverage.projectsAudited).toBe(1);
+    expect(data.coverage.noKnownGaps).toBe(false);
+  });
+
+  test('collects multiple gap reasons for the same project under one entry', async () => {
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role/10')) throw new Error('boom one');
+        if (p.includes('/project/AAA/role/11')) throw new Error('boom two');
+        if (p.includes('/project/AAA/role')) {
+          return {
+            Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10',
+            Admin: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/11',
+          };
+        }
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.coverage.partialProjects).toHaveLength(1);
+    expect(data.coverage.partialProjects[0].reasons).toHaveLength(2);
+  });
+
+  test('passes the acting identity into the report data', async () => {
+    const client = mockClient({
+      '/project/search': { values: [], isLast: true },
+    });
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', {
+      now,
+      identity: 'admin@acme.example',
+    });
+    expect(data.identity).toBe('admin@acme.example');
+  });
+
   test('warns and continues when a role actor has an unhandled type', async () => {
     const client = mockClient({
       '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },

@@ -8,6 +8,23 @@ import { fetchAllPages } from './jiraClient.js';
  */
 
 /**
+ * Record that a project could not be read completely.
+ * Kept structured (rather than only as a warning string) so the report can state
+ * plainly that it is incomplete instead of leaving it to stderr.
+ * @param {Map<string, import('./invert.js').ProjectGap>} into
+ * @param {{ key: string, name: string }} project
+ * @param {string} reason
+ */
+function noteGap(into, project, reason) {
+  const existing = into.get(project.key);
+  if (existing) {
+    existing.reasons.push(reason);
+    return;
+  }
+  into.set(project.key, { key: project.key, name: project.name, reasons: [reason] });
+}
+
+/**
  * Jira returns role URLs pointing at the site (…atlassian.net/…/role/10), which an
  * OAuth bearer token cannot call — those requests must go through the api.atlassian.com
  * gateway. Extract the role id so we can build a relative path the client resolves
@@ -25,13 +42,17 @@ function roleIdFromUrl(roleUrl) {
  * (with caching, warn-and-continue on failures), and invert to a user view.
  * @param {import('./jiraClient.js').JiraClient} client
  * @param {string} baseUrl
- * @param {{ now?: () => Date }} [opts]
+ * @param {{ now?: () => Date, identity?: string|null }} [opts]
  * @returns {Promise<AuditResult>}
  */
 export async function buildAudit(client, baseUrl, opts = {}) {
   const now = opts.now ?? (() => new Date());
   const warnings = [];
   const raws = [];
+  /** Projects whose role list could not be read at all. @type {Map<string, any>} */
+  const skipped = new Map();
+  /** Projects read, but with at least one role or actor missing. @type {Map<string, any>} */
+  const partial = new Map();
 
   const groupCache = new Map();
   const userCache = new Map();
@@ -75,6 +96,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     } catch (err) {
       if (err.fatal) throw err;
       warnings.push(`Project ${project.key} roles: ${err.message}`);
+      noteGap(skipped, project, `role list unreadable: ${err.message}`);
       continue;
     }
 
@@ -82,6 +104,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
       const roleId = roleIdFromUrl(roleUrl);
       if (!roleId) {
         warnings.push(`Project ${project.key} role ${roleName}: could not parse role id from ${roleUrl}`);
+        noteGap(partial, project, `role ${roleName}: unparseable role id`);
         continue;
       }
 
@@ -93,6 +116,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
       } catch (err) {
         if (err.fatal) throw err;
         warnings.push(`Project ${project.key} role ${roleName}: ${err.message}`);
+        noteGap(partial, project, `role ${roleName}: ${err.message}`);
         continue;
       }
 
@@ -125,24 +149,43 @@ export async function buildAudit(client, baseUrl, opts = {}) {
             }
           } else {
             warnings.push(`Project ${project.key} role ${roleName}: unhandled actor type ${actor.type}`);
+            // An actor we cannot interpret is an assignment missing from the report.
+            noteGap(partial, project, `role ${roleName}: unhandled actor type ${actor.type}`);
           }
         } catch (err) {
           if (err.fatal) throw err;
           if (actor.actorGroup) {
             const groupName = actor.actorGroup.displayName ?? actor.actorGroup.name ?? actor.actorGroup.groupId;
             warnings.push(`Project ${project.key} role ${roleName} group ${groupName}: ${err.message}`);
+            noteGap(partial, project, `role ${roleName}, group ${groupName}: ${err.message}`);
           } else {
             const actorLabel = actor.actorUser?.accountId ?? actor.displayName ?? 'unknown actor';
             warnings.push(`Project ${project.key} role ${roleName} actor ${actorLabel}: ${err.message}`);
+            noteGap(partial, project, `role ${roleName}, actor ${actorLabel}: ${err.message}`);
           }
         }
       }
     }
   }
 
+  const skippedProjects = [...skipped.values()];
+  const partialProjects = [...partial.values()];
+
   const data = invertAssignments(raws, {
     generatedAt: now().toISOString(),
     baseUrl,
+    identity: opts.identity ?? null,
+    coverage: {
+      projectsVisible: projects.length,
+      projectsAudited: projects.length - skippedProjects.length,
+      skippedProjects,
+      partialProjects,
+      warningCount: warnings.length,
+      // Only covers gaps we can *see*. Projects the account cannot browse never
+      // appear in /project/search at all, so they can never be counted here —
+      // which is exactly why the report always states whose view it reflects.
+      noKnownGaps: skippedProjects.length === 0 && partialProjects.length === 0,
+    },
   });
   return { data, warnings };
 }

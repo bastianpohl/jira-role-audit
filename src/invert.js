@@ -25,16 +25,32 @@
  * @property {Assignment[]} assignments
  * @property {number} areaCount
  *
+ * @typedef {object} ProjectGap
+ * @property {string} key
+ * @property {string} name
+ * @property {string[]} reasons
+ *
+ * @typedef {object} Coverage
+ * @property {number} projectsVisible  Projects returned by /project/search.
+ * @property {number} projectsAudited  Of those, the ones whose roles were readable.
+ * @property {ProjectGap[]} skippedProjects  Role list unreadable — no data at all.
+ * @property {ProjectGap[]} partialProjects  Some roles or actors missing.
+ * @property {number} warningCount
+ * @property {boolean} noKnownGaps  No *detectable* gaps; projects the account cannot
+ *   browse are invisible to /project/search and therefore never counted.
+ *
  * @typedef {object} AuditData
  * @property {string} generatedAt
  * @property {string} baseUrl
+ * @property {string|null} [identity]  Which account's view this report reflects.
+ * @property {Coverage} [coverage]
  * @property {AuditUser[]} users
  */
 
 /**
  * Invert per-(project, role, user) records into a user-centric view.
  * @param {RawAssignment[]} raws
- * @param {{ generatedAt: string, baseUrl: string }} meta
+ * @param {{ generatedAt: string, baseUrl: string, identity?: string|null, coverage?: Coverage }} meta
  * @returns {AuditData}
  */
 export function invertAssignments(raws, meta) {
@@ -72,5 +88,11 @@ export function invertAssignments(raws, meta) {
   }
 
   const users = [...byUser.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
-  return { generatedAt: meta.generatedAt, baseUrl: meta.baseUrl, users };
+  return {
+    generatedAt: meta.generatedAt,
+    baseUrl: meta.baseUrl,
+    identity: meta.identity ?? null,
+    coverage: meta.coverage ?? null,
+    users,
+  };
 }

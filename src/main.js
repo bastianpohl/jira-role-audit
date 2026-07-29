@@ -37,13 +37,27 @@ async function main() {
 
   const client = await createAuthenticatedClient(config);
 
+  const identity = config.auth === 'basic' ? config.email : 'service account (OAuth)';
+
   console.log(`Fetching Jira audit data from ${config.baseUrl} …`);
-  const { data, warnings } = await buildAudit(client, config.baseUrl);
+  const { data, warnings } = await buildAudit(client, config.baseUrl, { identity });
 
   const outPath = process.env.OUTPUT_FILE ?? 'jira-role-audit.html';
   await writeFile(outPath, renderHtml(data), 'utf8');
 
   console.log(`Wrote ${outPath} — ${data.users.length} users across their Bereiche.`);
+
+  const { coverage } = data;
+  if (coverage && !coverage.noKnownGaps) {
+    // Stated as a headline, not buried under the warning list: an audit that is
+    // quietly partial is worse than one that admits it.
+    console.warn(
+      `\nINCOMPLETE: ${coverage.projectsAudited} of ${coverage.projectsVisible} visible projects ` +
+        `were read fully (${coverage.skippedProjects.length} skipped, ` +
+        `${coverage.partialProjects.length} partial). The report says so too.`,
+    );
+  }
+
   if (warnings.length > 0) {
     console.warn(`\n${warnings.length} warning(s):`);
     for (const w of warnings) console.warn(`  - ${w}`);

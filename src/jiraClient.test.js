@@ -3,7 +3,7 @@ import { createJiraClient, fetchAllPages } from './jiraClient.js';
 
 const cfg = {
   apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-acme',
-  accessToken: 'tok-abc',
+  authHeader: 'Bearer tok-abc',
 };
 
 function jsonResponse(body, init = {}) {
@@ -66,11 +66,11 @@ describe('createJiraClient.getJson', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse({}, { status: 401 }))
       .mockResolvedValueOnce(jsonResponse({ done: true }));
-    const refreshAccessToken = vi.fn().mockResolvedValue('tok-fresh');
-    const client = createJiraClient(cfg, { fetchFn, refreshAccessToken });
+    const refreshAuthHeader = vi.fn().mockResolvedValue('Bearer tok-fresh');
+    const client = createJiraClient(cfg, { fetchFn, refreshAuthHeader });
 
     await expect(client.getJson('/x')).resolves.toEqual({ done: true });
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(refreshAuthHeader).toHaveBeenCalledTimes(1);
     expect(fetchFn.mock.calls[0][1].headers).toMatchObject({ Authorization: 'Bearer tok-abc' });
     expect(fetchFn.mock.calls[1][1].headers).toMatchObject({ Authorization: 'Bearer tok-fresh' });
   });
@@ -81,32 +81,32 @@ describe('createJiraClient.getJson', () => {
       .mockResolvedValueOnce(jsonResponse({}, { status: 401 }))
       // A fresh Response per call — a Response body can only be read once.
       .mockImplementation(async () => jsonResponse({ done: true }));
-    const refreshAccessToken = vi.fn().mockResolvedValue('tok-fresh');
-    const client = createJiraClient(cfg, { fetchFn, refreshAccessToken });
+    const refreshAuthHeader = vi.fn().mockResolvedValue('Bearer tok-fresh');
+    const client = createJiraClient(cfg, { fetchFn, refreshAuthHeader });
 
     await client.getJson('/first');
     await client.getJson('/second');
 
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(refreshAuthHeader).toHaveBeenCalledTimes(1);
     const lastInit = fetchFn.mock.calls.at(-1)[1];
     expect(lastInit.headers).toMatchObject({ Authorization: 'Bearer tok-fresh' });
   });
 
   test('stays fatal when the request still 401s after a successful refresh', async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
-    const refreshAccessToken = vi.fn().mockResolvedValue('tok-fresh');
-    const client = createJiraClient(cfg, { fetchFn, refreshAccessToken });
+    const refreshAuthHeader = vi.fn().mockResolvedValue('Bearer tok-fresh');
+    const client = createJiraClient(cfg, { fetchFn, refreshAuthHeader });
 
     const err = await client.getJson('/x').then(() => null, (e) => e);
     expect(err.fatal).toBe(true);
-    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(refreshAuthHeader).toHaveBeenCalledTimes(1);
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   test('throws a fatal error explaining the refresh failure when re-minting the token fails', async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
-    const refreshAccessToken = vi.fn().mockRejectedValue(new Error('invalid_client'));
-    const client = createJiraClient(cfg, { fetchFn, refreshAccessToken });
+    const refreshAuthHeader = vi.fn().mockRejectedValue(new Error('invalid_client'));
+    const client = createJiraClient(cfg, { fetchFn, refreshAuthHeader });
 
     const err = await client.getJson('/x').then(() => null, (e) => e);
     expect(err.fatal).toBe(true);
@@ -116,8 +116,8 @@ describe('createJiraClient.getJson', () => {
 
   test('treats a refresh callback that yields no token as a fatal failure', async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
-    const refreshAccessToken = vi.fn().mockResolvedValue(undefined);
-    const client = createJiraClient(cfg, { fetchFn, refreshAccessToken });
+    const refreshAuthHeader = vi.fn().mockResolvedValue(undefined);
+    const client = createJiraClient(cfg, { fetchFn, refreshAuthHeader });
 
     const err = await client.getJson('/x').then(() => null, (e) => e);
     expect(err.fatal).toBe(true);
@@ -132,13 +132,36 @@ describe('createJiraClient.getJson', () => {
       .mockResolvedValueOnce(jsonResponse({}, { status: 429 }))
       .mockResolvedValueOnce(jsonResponse({ done: true }));
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const refreshAccessToken = vi.fn().mockResolvedValue('tok-fresh');
-    const client = createJiraClient(cfg, { fetchFn, sleep, refreshAccessToken, maxRetries: 2 });
+    const refreshAuthHeader = vi.fn().mockResolvedValue('Bearer tok-fresh');
+    const client = createJiraClient(cfg, { fetchFn, sleep, refreshAuthHeader, maxRetries: 2 });
 
     await expect(client.getJson('/x')).resolves.toEqual({ done: true });
     // Backoff advanced 1s -> 2s across the two 429s; the 401 in between did not reset
     // or consume the budget.
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000]);
+  });
+
+  test('sends a Basic header verbatim against the site url when no refresh is configured', async () => {
+    const basicCfg = {
+      apiBaseUrl: 'https://acme.atlassian.net',
+      authHeader: 'Basic ZW1haWw6dG9rZW4=',
+    };
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    const client = createJiraClient(basicCfg, { fetchFn });
+
+    await expect(client.getJson('/rest/api/3/myself')).resolves.toEqual({ ok: true });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('https://acme.atlassian.net/rest/api/3/myself');
+    expect(init.headers).toMatchObject({ Authorization: 'Basic ZW1haWw6dG9rZW4=' });
+  });
+
+  test('fails fast on 401 without a refresh callback (API tokens do not expire)', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 }));
+    const client = createJiraClient(cfg, { fetchFn });
+
+    const err = await client.getJson('/x').then(() => null, (e) => e);
+    expect(err.fatal).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
   test('collapses concurrent 401 refreshes onto a single token request', async () => {
@@ -148,12 +171,12 @@ describe('createJiraClient.getJson', () => {
         ? jsonResponse({}, { status: 401 })
         : jsonResponse({ done: true }),
     );
-    const refreshAccessToken = vi.fn(async () => {
+    const refreshAuthHeader = vi.fn(async () => {
       refreshCount++;
       await new Promise((r) => setTimeout(r, 5));
-      return 'tok-fresh';
+      return 'Bearer tok-fresh';
     });
-    const client = createJiraClient(cfg, { fetchFn, refreshAccessToken });
+    const client = createJiraClient(cfg, { fetchFn, refreshAuthHeader });
 
     const results = await Promise.all([client.getJson('/a'), client.getJson('/b')]);
     expect(results).toEqual([{ done: true }, { done: true }]);

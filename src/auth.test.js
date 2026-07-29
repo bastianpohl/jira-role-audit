@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { fetchAccessToken, resolveCloudId, apiBaseUrlFor } from './auth.js';
+import { fetchAccessToken, resolveCloudId, apiBaseUrlFor, basicAuthHeader } from './auth.js';
 
 const cfg = {
   baseUrl: 'https://acme.atlassian.net',
@@ -14,6 +14,21 @@ function jsonResponse(body, init = {}) {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+describe('basicAuthHeader', () => {
+  test('base64-encodes email:token', () => {
+    const header = basicAuthHeader('admin@acme.example', 'token789');
+    expect(header.startsWith('Basic ')).toBe(true);
+    const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8');
+    expect(decoded).toBe('admin@acme.example:token789');
+  });
+
+  test('encodes non-ascii characters as utf-8 rather than mangling them', () => {
+    const header = basicAuthHeader('bäcker@acme.example', 'töken');
+    const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8');
+    expect(decoded).toBe('bäcker@acme.example:töken');
+  });
+});
 
 describe('fetchAccessToken', () => {
   test('posts client_credentials to the atlassian token endpoint and returns the token', async () => {

@@ -8,20 +8,23 @@
  * @property {typeof fetch} [fetchFn]
  * @property {number} [maxRetries]
  * @property {(ms: number) => Promise<void>} [sleep]
- * @property {() => Promise<string>} [refreshAccessToken]
- *   Obtain a fresh access token. Service account tokens live 60 minutes, which a
- *   large audit can outlast, so a 401 triggers one refresh-and-retry before it is
- *   treated as fatal. Without this the client fails hard on the first 401.
+ * @property {() => Promise<string>} [refreshAuthHeader]
+ *   Obtain a fresh Authorization header. Service account OAuth tokens live 60
+ *   minutes, which a large audit can outlast, so a 401 triggers one
+ *   refresh-and-retry before it is treated as fatal. Omit it for credentials that
+ *   do not expire (API tokens), where a 401 can only mean bad credentials.
  */
 
 /**
  * @typedef {object} ClientAuth
- * @property {string} apiBaseUrl  e.g. https://api.atlassian.com/ex/jira/{cloudId}
- * @property {string} accessToken OAuth 2.0 bearer token
+ * @property {string} apiBaseUrl  OAuth: https://api.atlassian.com/ex/jira/{cloudId}
+ *                                API token: the site URL, e.g. https://acme.atlassian.net
+ * @property {string} authHeader  Full Authorization header value ('Bearer …' or 'Basic …')
  */
 
 /**
- * Create a thin Jira REST client: bearer auth, 429-retry with backoff, JSON parsing.
+ * Create a thin Jira REST client: 429-retry with backoff, JSON parsing, and an
+ * auth scheme it deliberately knows nothing about beyond the header value.
  * @param {ClientAuth} config
  * @param {ClientOptions} [opts]
  * @returns {JiraClient}
@@ -30,21 +33,21 @@ export function createJiraClient(config, opts = {}) {
   const fetchFn = opts.fetchFn ?? fetch;
   const maxRetries = opts.maxRetries ?? 5;
   const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  const refreshAccessToken = opts.refreshAccessToken ?? null;
+  const refreshAuthHeader = opts.refreshAuthHeader ?? null;
 
   // Held in a mutable local (not on config) so a refresh applies to every later
   // request, not just the one that hit the 401.
-  let accessToken = config.accessToken;
+  let authHeader = config.authHeader;
   let inFlightRefresh = null;
 
-  /** Refresh the token, collapsing concurrent callers onto a single token request. */
+  /** Refresh credentials, collapsing concurrent callers onto a single token request. */
   async function refresh() {
     if (!inFlightRefresh) {
       inFlightRefresh = (async () => {
         try {
-          const fresh = await refreshAccessToken();
+          const fresh = await refreshAuthHeader();
           if (!fresh) throw new Error('the refresh callback returned no access token');
-          accessToken = fresh;
+          authHeader = fresh;
           return fresh;
         } finally {
           inFlightRefresh = null;
@@ -63,7 +66,7 @@ export function createJiraClient(config, opts = {}) {
 
     for (;;) {
       const res = await fetchFn(url, {
-        headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+        headers: { Authorization: authHeader, Accept: 'application/json' },
       });
 
       if (res.status === 429 && rateLimitAttempt < maxRetries) {
@@ -81,7 +84,7 @@ export function createJiraClient(config, opts = {}) {
         // An expired mid-audit token and a bad credential look identical here, so
         // try exactly one refresh: if the retry still 401s, the credential is at
         // fault and the error stays fatal.
-        if (refreshAccessToken && !refreshed) {
+        if (refreshAuthHeader && !refreshed) {
           refreshed = true;
           try {
             await refresh();
@@ -97,7 +100,8 @@ export function createJiraClient(config, opts = {}) {
         }
 
         const err = new Error(
-          `Jira API 401 ${res.statusText} for ${url} — the OAuth access token is invalid or expired.`,
+          `Jira API 401 ${res.statusText} for ${url} — the credentials were rejected ` +
+            '(invalid or expired token).',
         );
         err.fatal = true;
         throw err;

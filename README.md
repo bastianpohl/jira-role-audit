@@ -9,31 +9,59 @@ Plain Node.js (JavaScript, ES modules) — no build step, run directly with `nod
 ## Requirements
 
 - Node ≥ 18 (uses the built-in global `fetch`)
-- An Atlassian **service account** with an OAuth 2.0 credential (client id + secret).
-  The account needs access to every project you want audited — missing permissions
-  mean missing Bereiche in the report.
+- Credentials for an account that can see every project you want audited —
+  missing permissions mean missing Bereiche in the report. Either your own
+  Atlassian account (API token) or a service account (OAuth); see below.
+
+## Authentication
+
+Two alternatives — pick one:
+
+| | **A: API token** | **B: Service account OAuth** |
+| --- | --- | --- |
+| Identity | your own user | dedicated service account |
+| Env vars | `JIRA_EMAIL`, `JIRA_API_TOKEN` | `JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET` |
+| Endpoint | site URL directly | `api.atlassian.com` gateway (needs `cloudId`) |
+| Scopes | none — carries your full permissions | 12 granular scopes, read-only |
+| Expiry | token is long-lived | 60 min, refreshed automatically |
+| Best for | one-off runs by an admin | unattended/scheduled runs |
+
+**A is the quickest way to a complete report** if your own account is a Jira
+admin — no scope wiring, no admin console. The trade-off is that an API token is
+not scope-limited: it can do anything your user can, so treat it like a password
+and don't park it on a shared machine. **B** is the better fit for anything
+recurring, because the credential is read-only and revocable on its own.
+
+Both are configured through `.env`. Setting both credential sets is an error
+unless `JIRA_AUTH=basic|oauth` states which identity should generate the report —
+the tool won't guess, since the acting identity determines what the report contains.
 
 ## Setup
 
-1. In [admin.atlassian.com](https://admin.atlassian.com): **Directory → Service accounts →**
-   your account **→ Create OAuth 2.0 credential**. Grant the scopes listed under
-   [Scopes and permissions](#scopes-and-permissions), and give the account access to
-   the Jira site. Copy the client id and secret — the secret is shown only once.
-2. Install and configure:
-
 ```bash
 npm install
-cp .env.example .env   # then fill in the values
+cp .env.example .env   # then fill in ONE of the two credential blocks
 ```
 
-`.env`:
+For **A**, create the token at
+[id.atlassian.com → API tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+and set `JIRA_EMAIL` + `JIRA_API_TOKEN`.
 
-- `JIRA_BASE_URL` — e.g. `https://your-org.atlassian.net`
-- `JIRA_CLIENT_ID` — the service account's OAuth 2.0 client id
-- `JIRA_CLIENT_SECRET` — the matching client secret
-- `JIRA_CLOUD_ID` — *optional*; resolved automatically from `JIRA_BASE_URL` when unset
+For **B**, go to [admin.atlassian.com](https://admin.atlassian.com): **Directory →
+Service accounts →** your account **→ Create OAuth 2.0 credential**. Grant the scopes
+listed under [Scopes and permissions](#scopes-and-permissions) and give the account
+access to the Jira site. Copy the client id and secret — the secret is shown only once.
+
+Other variables:
+
+- `JIRA_BASE_URL` — e.g. `https://your-org.atlassian.net` (always required)
+- `JIRA_CLOUD_ID` — *optional, OAuth only*; resolved from `JIRA_BASE_URL` when unset
 
 ## Scopes and permissions
+
+Scopes apply to **option B (OAuth) only** — an API token carries its user's
+permissions and has no scopes. The *permission* requirements at the end of this
+section apply to **both** options.
 
 Grant the credential these **granular** Jira scopes:
 
@@ -65,19 +93,26 @@ Jira permissions *and* credential scope all allow it. The API requires:
 
 So without *Administer Jira*, the report is **silently incomplete**: invisible projects
 are simply absent rather than reported as an error, and role calls that are refused show
-up only as warnings on stderr. Grant the service account *Administer Jira* and check the
-warning count at the end of each run.
+up only as warnings on stderr. Whichever option you pick, make sure the acting account
+has *Administer Jira*, and check the warning count at the end of each run.
 
 ### How authentication works
 
-The tool exchanges the client credentials for an access token at
-`https://auth.atlassian.com/oauth/token` (`grant_type=client_credentials`), resolves the
-site's `cloudId`, and calls the Jira REST API through the gateway at
-`https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/...` with a bearer token.
+**API token (Basic).** `Authorization: Basic base64(email:token)`, sent straight to
+`https://your-org.atlassian.net/rest/api/3/...`. No `cloudId`, no gateway. The token
+does not expire, so a `401` can only mean it is wrong or revoked and the run aborts
+immediately.
 
-Tokens are valid for 60 minutes, which a large audit can outlast, so a `401` triggers one
+**Service account (OAuth).** The client credentials are exchanged for an access token at
+`https://auth.atlassian.com/oauth/token` (`grant_type=client_credentials`); the tool then
+resolves the site's `cloudId` and calls the API through the gateway at
+`https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/...` with a bearer token. Those
+tokens are valid for 60 minutes, which a large audit can outlast, so a `401` triggers one
 token refresh and a retry of the failed request. If the retry still returns `401` the
 credential itself is at fault and the run aborts rather than reporting partial data.
+
+In both modes a `403` is treated as a per-project permission gap: it becomes a warning
+and the audit continues, because a single inaccessible project should not void the run.
 
 ## Run
 

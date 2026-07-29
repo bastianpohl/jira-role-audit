@@ -11,6 +11,18 @@ function normalizeUrl(url) {
 }
 
 /**
+ * Build the Authorization header for API token (Basic) auth.
+ * Unlike OAuth, these requests go straight to the site URL — not the
+ * api.atlassian.com gateway — so no cloudId is involved.
+ * @param {string} email
+ * @param {string} apiToken
+ * @returns {string}
+ */
+export function basicAuthHeader(email, apiToken) {
+  return `Basic ${Buffer.from(`${email}:${apiToken}`, 'utf8').toString('base64')}`;
+}
+
+/**
  * Exchange the service account's client credentials for an access token.
  * The secret is never included in thrown errors.
  * @param {import('./config.js').Config} config

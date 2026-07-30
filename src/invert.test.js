@@ -67,6 +67,18 @@ describe('invertAssignments', () => {
     expect(data.users[0].groups).toEqual([]);
   });
 
+  test('collects the distinct roles a user holds, sorted', () => {
+    const data = invertAssignments(
+      [
+        raw({ roleName: 'Member' }),
+        raw({ projectKey: 'BBB', projectName: 'Beta', roleName: 'Administrator' }),
+        raw({ projectKey: 'CCC', projectName: 'Gamma', roleName: 'Member' }),
+      ],
+      meta,
+    );
+    expect(data.users[0].roles).toEqual(['Administrator', 'Member']);
+  });
+
   test('carries the active status through', () => {
     const data = invertAssignments([raw({ active: false })], meta);
     expect(data.users[0].active).toBe(false);

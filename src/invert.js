@@ -28,6 +28,7 @@
  * @property {number} areaCount
  * @property {string[]} groups  Groups granting this user a role, sorted. Not the
  *   user's full group membership — only groups seen as role actors.
+ * @property {string[]} roles  Distinct role names this user holds anywhere, sorted.
  *
  * @typedef {object} ProjectGap
  * @property {string} key
@@ -73,6 +74,7 @@ export function invertAssignments(raws, meta) {
         assignments: [],
         areaCount: 0,
         groups: [],
+        roles: [],
       };
       byUser.set(r.accountId, user);
     }
@@ -99,6 +101,9 @@ export function invertAssignments(raws, meta) {
         user.assignments.filter((a) => a.via.kind === 'group').map((a) => a.via.groupName),
       ),
     ].sort((a, b) => a.localeCompare(b));
+    user.roles = [...new Set(user.assignments.map((a) => a.roleName))].sort((a, b) =>
+      a.localeCompare(b),
+    );
     user.assignments.sort(
       (a, b) => a.projectName.localeCompare(b.projectName) || a.roleName.localeCompare(b.roleName),
     );

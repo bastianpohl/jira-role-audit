@@ -27,10 +27,15 @@ export function renderHtml(data) {
   .meta { color: #888; font-size: .85rem; margin-bottom: 1rem; }
   input[type=search] { padding: .4rem .6rem; flex: 1 1 220px; max-width: 320px; }
   input[type=number] { padding: .4rem .5rem; width: 5.5rem; }
-  .controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; }
-  .controls label { display: inline-flex; align-items: center; gap: .35rem; font-size: .9rem; }
+  .controls { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: flex-end; margin-bottom: 1rem; }
+  .controls label { font-size: .9rem; }
+  /* Each label stays glued to its control, so wrapping never splits the pair. */
+  .field { display: inline-flex; align-items: center; gap: .35rem; }
+  .field.stacked { flex-direction: column; align-items: flex-start; gap: .2rem; }
   .controls button { padding: .4rem .7rem; cursor: pointer; }
   .controls select { padding: .35rem .4rem; max-width: 220px; }
+  .controls select[multiple] { min-width: 140px; }
+  .hint { color: #888; font-size: .8rem; flex-basis: 100%; }
   .status-inactive { color: #c62828; font-weight: 600; }
   .status-unknown { color: #888; font-style: italic; }
   .groups { margin-top: .3rem; }
@@ -65,20 +70,31 @@ export function renderHtml(data) {
 <section id="overview">
   <div class="controls">
     <input type="search" id="filter" placeholder="Nach Name oder E-Mail filtern…">
-    <label for="min-areas">Bereiche von</label>
-    <input type="number" id="min-areas" min="0" step="1" inputmode="numeric" placeholder="min">
-    <label for="max-areas">bis</label>
-    <input type="number" id="max-areas" min="0" step="1" inputmode="numeric" placeholder="max">
-    <label for="group-filter">Gruppe</label>
-    <select id="group-filter"><option value="">alle</option></select>
-    <label for="status-filter">Status</label>
-    <select id="status-filter">
-      <option value="">alle</option>
-      <option value="active">nur aktive</option>
-      <option value="inactive">nur inaktive</option>
-      <option value="unknown">Status unbekannt</option>
-    </select>
+    <span class="field">
+      <label for="min-areas">Bereiche von</label>
+      <input type="number" id="min-areas" min="0" step="1" inputmode="numeric" placeholder="min">
+      <label for="max-areas">bis</label>
+      <input type="number" id="max-areas" min="0" step="1" inputmode="numeric" placeholder="max">
+    </span>
+    <span class="field">
+      <label for="status-filter">Status</label>
+      <select id="status-filter">
+        <option value="">alle</option>
+        <option value="active">nur aktive</option>
+        <option value="inactive">nur inaktive</option>
+        <option value="unknown">Status unbekannt</option>
+      </select>
+    </span>
+    <span class="field stacked">
+      <label for="group-filter">Gruppen</label>
+      <select id="group-filter" multiple size="4"></select>
+    </span>
+    <span class="field stacked">
+      <label for="role-filter">Rollen</label>
+      <select id="role-filter" multiple size="4"></select>
+    </span>
     <button type="button" id="reset">Filter zurücksetzen</button>
+    <span class="hint">Gruppen/Rollen: Mehrfachauswahl mit Strg/Cmd oder Shift</span>
   </div>
   <table>
     <thead><tr>
@@ -115,8 +131,19 @@ export function renderHtml(data) {
   let filter = '';
   let minAreas = null;
   let maxAreas = null;
-  let groupFilter = '';
+  // Multi-select facets: OR within a facet, AND between facets. An empty
+  // selection means "no restriction" rather than "match nothing".
+  let groupFilter = [];
+  let roleFilter = [];
   let statusFilter = '';
+
+  function selectedValues(id) {
+    return [...document.getElementById(id).selectedOptions].map((o) => o.value);
+  }
+
+  function matchesAny(selected, values) {
+    return selected.length === 0 || values.some((v) => selected.includes(v));
+  }
 
   // An unknown status is shown as such, never silently folded into "Aktiv" —
   // a permissions report should not invent a fact it failed to fetch.
@@ -134,6 +161,10 @@ export function renderHtml(data) {
 
   function userGroups(u) {
     return u.groups || [];
+  }
+
+  function userRoles(u) {
+    return u.roles || [];
   }
 
   // Empty and non-numeric both mean "no bound" — a half-typed value must not
@@ -233,7 +264,8 @@ export function renderHtml(data) {
         if (!hay.includes(filter)) return false;
         if (minAreas !== null && u.areaCount < minAreas) return false;
         if (maxAreas !== null && u.areaCount > maxAreas) return false;
-        if (groupFilter && !userGroups(u).includes(groupFilter)) return false;
+        if (!matchesAny(groupFilter, userGroups(u))) return false;
+        if (!matchesAny(roleFilter, userRoles(u))) return false;
         if (statusFilter && statusKey(u) !== statusFilter) return false;
         return true;
       })
@@ -299,8 +331,12 @@ export function renderHtml(data) {
       renderOverview();
     });
   });
-  document.getElementById('group-filter').addEventListener('change', (e) => {
-    groupFilter = e.target.value;
+  document.getElementById('group-filter').addEventListener('change', () => {
+    groupFilter = selectedValues('group-filter');
+    renderOverview();
+  });
+  document.getElementById('role-filter').addEventListener('change', () => {
+    roleFilter = selectedValues('role-filter');
     renderOverview();
   });
   document.getElementById('status-filter').addEventListener('change', (e) => {
@@ -311,12 +347,15 @@ export function renderHtml(data) {
     document.getElementById('filter').value = '';
     document.getElementById('min-areas').value = '';
     document.getElementById('max-areas').value = '';
-    document.getElementById('group-filter').value = '';
     document.getElementById('status-filter').value = '';
+    ['group-filter', 'role-filter'].forEach((id) => {
+      [...document.getElementById(id).options].forEach((o) => { o.selected = false; });
+    });
     filter = '';
     minAreas = null;
     maxAreas = null;
-    groupFilter = '';
+    groupFilter = [];
+    roleFilter = [];
     statusFilter = '';
     renderOverview();
   });
@@ -328,18 +367,17 @@ export function renderHtml(data) {
     });
   });
 
-  // Only groups that actually grant a role appear here, so the dropdown never
-  // offers a value that would filter down to nothing.
-  function populateGroupFilter() {
-    const all = [...new Set(data.users.flatMap(userGroups))].sort((a, b) => a.localeCompare(b));
-    const select = document.getElementById('group-filter');
-    select.insertAdjacentHTML(
+  // Options come from the data, so a selection can never filter down to nothing.
+  function populateFacet(id, pick) {
+    const all = [...new Set(data.users.flatMap(pick))].sort((a, b) => a.localeCompare(b));
+    document.getElementById(id).insertAdjacentHTML(
       'beforeend',
-      all.map((g) => '<option value="' + esc(g) + '">' + esc(g) + '</option>').join(''),
+      all.map((v) => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join(''),
     );
   }
 
-  populateGroupFilter();
+  populateFacet('group-filter', userGroups);
+  populateFacet('role-filter', userRoles);
   renderBanners();
   renderOverview();
 })();

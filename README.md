@@ -161,7 +161,19 @@ Two things to know about those two columns:
 
 **The report contains real names and e-mail addresses.** `.gitignore` covers `*.html`
 and `out/`; if `OUTPUT_FILE` points anywhere else, the run prints a warning, because
-the file would not be ignored.
+the file would not be ignored. Missing folders in the path are created.
+
+### Windows notes
+
+- On Windows, `set OUTPUT_FILE="C:\reports\audit.html"` keeps the quotes as part of the
+  value, and `"` is an illegal filename character — the quotes are stripped for you.
+- Names Windows rejects (`< > : " | ? *`, reserved device names like `NUL` or `CON`, and
+  segments ending in a space or dot) are refused up front with an explanation, before the
+  audit runs, rather than failing with a raw errno after it.
+- If the write fails because the file is open in a browser tab or held by OneDrive or
+  antivirus, the error says so instead of just `EPERM`.
+- Use the **64-bit** Node build. The report is assembled as a single string, and a 32-bit
+  Node caps strings at roughly half the size, which a large site can exceed.
 
 ## Test
 

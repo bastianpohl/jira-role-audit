@@ -1,5 +1,7 @@
-import { writeFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { loadConfig } from './config.js';
+import { resolveOutputPath, validateOutputPath, describeWriteError } from './outputPath.js';
 import { fetchAccessToken, resolveCloudId, apiBaseUrlFor, basicAuthHeader } from './auth.js';
 import { createJiraClient } from './jiraClient.js';
 import { buildAudit } from './fetchAudit.js';
@@ -39,7 +41,8 @@ async function createAuthenticatedClient(config) {
  * @param {string} outPath
  */
 function warnIfNotGitIgnored(outPath) {
-  const covered = outPath.endsWith('.html') || /^(\.\/)?out\//.test(outPath);
+  // Accept both separators: on Windows the same path arrives as `out\report.txt`.
+  const covered = outPath.endsWith('.html') || /^(\.[\\/])?out[\\/]/.test(outPath);
   if (covered) return;
   console.warn(
     `\nWARNING: ${outPath} matches neither *.html nor out/ in .gitignore. The report ` +
@@ -47,8 +50,30 @@ function warnIfNotGitIgnored(outPath) {
   );
 }
 
+/**
+ * A failure the user can fix from the message alone — no stack trace needed.
+ * @param {string} message
+ */
+function userError(message) {
+  const err = new Error(message);
+  err.expected = true;
+  return err;
+}
+
 async function main() {
-  const config = loadConfig();
+  let config;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    throw userError(err.message);
+  }
+
+  // Resolved before any API call: a bad OUTPUT_FILE should fail in a second, not
+  // after a full audit has already been fetched.
+  const outPath = resolveOutputPath(process.env.OUTPUT_FILE) || 'jira-role-audit.html';
+  const pathProblem = validateOutputPath(outPath);
+  if (pathProblem) throw userError(pathProblem);
+  warnIfNotGitIgnored(outPath);
 
   const client = await createAuthenticatedClient(config);
 
@@ -64,9 +89,30 @@ async function main() {
     excludeProjects: config.excludeProjects,
   });
 
-  const outPath = process.env.OUTPUT_FILE ?? 'jira-role-audit.html';
-  warnIfNotGitIgnored(outPath);
-  await writeFile(outPath, renderHtml(data), 'utf8');
+  let html;
+  try {
+    html = renderHtml(data);
+  } catch (err) {
+    // The whole report is built as one string. On a very large site that can hit
+    // V8's string cap — ~512 MB on 64-bit, but only ~256 MB on a 32-bit Node,
+    // which is still a normal install on Windows and does not exist on macOS.
+    if (err instanceof RangeError) {
+      throw userError(
+        `The report is too large to build as a single HTML string (${data.users.length} users). ` +
+          `Node ${process.version} (${process.arch}) — a 32-bit Node hits this far sooner, so install ` +
+          'the 64-bit build, or narrow the run with JIRA_EXCLUDE_PROJECTS.',
+      );
+    }
+    throw err;
+  }
+
+  try {
+    // The docs point at out/, so create the folder rather than failing on ENOENT.
+    await mkdir(dirname(resolve(outPath)), { recursive: true });
+    await writeFile(outPath, html, 'utf8');
+  } catch (err) {
+    throw userError(describeWriteError(err, outPath));
+  }
 
   console.log(`Wrote ${outPath} — ${data.users.length} users across their Bereiche.`);
 
@@ -88,6 +134,24 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`Failed: ${err.message}`);
+  // Report enough to diagnose without a debugger: a bare message plus a silent
+  // exit code is what makes a failure look like a crash.
+  if (err instanceof Error) {
+    console.error(`Failed: ${err.message}${err.code ? ` (${err.code})` : ''}`);
+    if (!err.expected && err.stack) console.error(err.stack);
+  } else {
+    console.error('Failed with a non-Error value:', err);
+  }
+  process.exitCode = 1;
+});
+
+// An out-of-memory abort cannot be caught, but these two can, and they otherwise
+// terminate the process with no explanation at all.
+process.on('unhandledRejection', (reason) => {
+  console.error('Failed: unhandled rejection —', reason);
+  process.exitCode = 1;
+});
+process.on('uncaughtException', (err) => {
+  console.error('Failed: uncaught exception —', err && err.stack ? err.stack : err);
   process.exitCode = 1;
 });

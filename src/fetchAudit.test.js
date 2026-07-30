@@ -307,6 +307,63 @@ describe('buildAudit', () => {
     await expect(buildAudit(client, 'https://acme.atlassian.net', { now })).rejects.toBe(fatal);
   });
 
+  test('carries the active flag from the user endpoint into the report', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/project/AAA/role/10': {
+        actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+      },
+      '/user?accountId=u1': {
+        accountId: 'u1', displayName: 'Alice', emailAddress: 'a@acme.com', active: false,
+      },
+    });
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.users[0].active).toBe(false);
+  });
+
+  test('carries the active flag from group members', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/project/AAA/role/10': {
+        actors: [{ type: 'atlassian-group-role-actor', actorGroup: { name: 'devs', displayName: 'devs', groupId: 'g1' } }],
+      },
+      '/group/member': {
+        values: [{ accountId: 'u9', displayName: 'Bob', emailAddress: 'b@acme.com', active: true }],
+        isLast: true,
+      },
+    });
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.users[0].active).toBe(true);
+    expect(data.users[0].groups).toEqual(['devs']);
+  });
+
+  test('leaves the status unknown when the user lookup failed', async () => {
+    const client = {
+      getJson: vi.fn(async (p) => {
+        if (p.includes('/project/search')) {
+          return { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true };
+        }
+        if (p.includes('/project/AAA/role/10')) {
+          return {
+            actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+          };
+        }
+        if (p.includes('/project/AAA/role')) {
+          return { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' };
+        }
+        if (p.includes('/user?accountId=u1')) throw new Error('Jira API 403 Forbidden');
+        throw new Error(`no route for ${p}`);
+      }),
+    };
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', { now });
+    expect(data.users[0].active).toBeNull();
+  });
+
   test('reports no known gaps and a full project count on a clean run', async () => {
     const client = mockClient({
       '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },

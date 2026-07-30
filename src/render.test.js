@@ -72,6 +72,14 @@ describe('renderHtml', () => {
     expect(html).toContain('id="count"');
   });
 
+  test('ships the group and status filters plus a Status column', () => {
+    const html = renderHtml(data);
+    expect(html).toContain('id="group-filter"');
+    expect(html).toContain('id="status-filter"');
+    expect(html).toContain('data-sort="statusLabel"');
+    expect(html).toContain('>Status<');
+  });
+
   test('escapes the closing script sequence to prevent breakout', () => {
     const evil = {
       ...data,

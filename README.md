@@ -135,13 +135,23 @@ npm start          # or: node src/main.js
 Writes `jira-role-audit.html` (override with `OUTPUT_FILE=path npm start`). Open it in
 a browser:
 
-- overview table (Name, E-Mail, Anzahl Bereiche), sortable by clicking a header
-- filter by name/e-mail, and by a min/max range on **Anzahl Bereiche** — useful for
-  finding the accounts with unusually broad access
+- overview table (Name, E-Mail, Status, Anzahl Bereiche), sortable by clicking a header
+- filters, all combining: name/e-mail search, a min/max range on **Anzahl Bereiche**,
+  a **group** dropdown, and a **status** dropdown (aktiv / inaktiv / unbekannt)
 - below the table, how many entries are shown out of the total
-- click a row for the per-user detail view (Projekt, Key, Rolle, Zugriffsweg)
+- click a row for the per-user detail view (Projekt, Key, Rolle, Zugriffsweg), including
+  the user's status and the groups granting them roles
 - banners at the top state whose view the report reflects, and name any projects
   that could not be read fully
+
+Two things to know about those two columns:
+
+- **Status** comes from Jira's `active` flag. Inactive accounts that still hold roles are
+  the point of showing it — they are exactly what an access review looks for. If a user
+  lookup failed, the status reads *unbekannt* rather than defaulting to active.
+- The **group** filter lists groups that grant a role, which is what the audit fetches.
+  It is not a user's full group membership: a group that grants no project role never
+  appears as a role actor and so cannot be listed here.
 
 **The report contains real names and e-mail addresses.** `.gitignore` covers `*.html`
 and `out/`; if `OUTPUT_FILE` points anywhere else, the run prints a warning, because

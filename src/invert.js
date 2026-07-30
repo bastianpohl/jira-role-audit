@@ -10,6 +10,7 @@
  * @property {string} accountId
  * @property {string} displayName
  * @property {string|null} emailAddress
+ * @property {boolean|null} [active]
  * @property {AccessVia} via
  *
  * @typedef {object} Assignment
@@ -22,8 +23,11 @@
  * @property {string} accountId
  * @property {string} displayName
  * @property {string|null} emailAddress
+ * @property {boolean|null} active  null when the status could not be determined.
  * @property {Assignment[]} assignments
  * @property {number} areaCount
+ * @property {string[]} groups  Groups granting this user a role, sorted. Not the
+ *   user's full group membership — only groups seen as role actors.
  *
  * @typedef {object} ProjectGap
  * @property {string} key
@@ -65,14 +69,20 @@ export function invertAssignments(raws, meta) {
         accountId: r.accountId,
         displayName: r.displayName,
         emailAddress: r.emailAddress,
+        active: r.active ?? null,
         assignments: [],
         areaCount: 0,
+        groups: [],
       };
       byUser.set(r.accountId, user);
     }
     // Prefer a non-null email if a later record has one.
     if (user.emailAddress === null && r.emailAddress !== null) {
       user.emailAddress = r.emailAddress;
+    }
+    // Same for the status: the first record that actually knows it wins.
+    if (user.active === null && (r.active ?? null) !== null) {
+      user.active = r.active;
     }
     user.assignments.push({
       projectKey: r.projectKey,
@@ -84,6 +94,11 @@ export function invertAssignments(raws, meta) {
 
   for (const user of byUser.values()) {
     user.areaCount = new Set(user.assignments.map((a) => a.projectKey)).size;
+    user.groups = [
+      ...new Set(
+        user.assignments.filter((a) => a.via.kind === 'group').map((a) => a.via.groupName),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
     user.assignments.sort(
       (a, b) => a.projectName.localeCompare(b.projectName) || a.roleName.localeCompare(b.roleName),
     );

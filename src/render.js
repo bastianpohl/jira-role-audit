@@ -30,6 +30,10 @@ export function renderHtml(data) {
   .controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; }
   .controls label { display: inline-flex; align-items: center; gap: .35rem; font-size: .9rem; }
   .controls button { padding: .4rem .7rem; cursor: pointer; }
+  .controls select { padding: .35rem .4rem; max-width: 220px; }
+  .status-inactive { color: #c62828; font-weight: 600; }
+  .status-unknown { color: #888; font-style: italic; }
+  .groups { margin-top: .3rem; }
   #count { margin-top: .75rem; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid #8884; }
@@ -65,12 +69,22 @@ export function renderHtml(data) {
     <input type="number" id="min-areas" min="0" step="1" inputmode="numeric" placeholder="min">
     <label for="max-areas">bis</label>
     <input type="number" id="max-areas" min="0" step="1" inputmode="numeric" placeholder="max">
+    <label for="group-filter">Gruppe</label>
+    <select id="group-filter"><option value="">alle</option></select>
+    <label for="status-filter">Status</label>
+    <select id="status-filter">
+      <option value="">alle</option>
+      <option value="active">nur aktive</option>
+      <option value="inactive">nur inaktive</option>
+      <option value="unknown">Status unbekannt</option>
+    </select>
     <button type="button" id="reset">Filter zurücksetzen</button>
   </div>
   <table>
     <thead><tr>
       <th data-sort="displayName">Name</th>
       <th data-sort="emailAddress">E-Mail</th>
+      <th data-sort="statusLabel">Status</th>
       <th data-sort="areaCount" class="num">Anzahl Bereiche</th>
     </tr></thead>
     <tbody id="overview-body"></tbody>
@@ -101,6 +115,26 @@ export function renderHtml(data) {
   let filter = '';
   let minAreas = null;
   let maxAreas = null;
+  let groupFilter = '';
+  let statusFilter = '';
+
+  // An unknown status is shown as such, never silently folded into "Aktiv" —
+  // a permissions report should not invent a fact it failed to fetch.
+  function statusLabel(u) {
+    if (u.active === true) return 'Aktiv';
+    if (u.active === false) return 'Inaktiv';
+    return 'unbekannt';
+  }
+
+  function statusKey(u) {
+    if (u.active === true) return 'active';
+    if (u.active === false) return 'inactive';
+    return 'unknown';
+  }
+
+  function userGroups(u) {
+    return u.groups || [];
+  }
 
   // Empty and non-numeric both mean "no bound" — a half-typed value must not
   // silently hide rows.
@@ -199,10 +233,13 @@ export function renderHtml(data) {
         if (!hay.includes(filter)) return false;
         if (minAreas !== null && u.areaCount < minAreas) return false;
         if (maxAreas !== null && u.areaCount > maxAreas) return false;
+        if (groupFilter && !userGroups(u).includes(groupFilter)) return false;
+        if (statusFilter && statusKey(u) !== statusFilter) return false;
         return true;
       })
       .sort((a, b) => {
-        const av = a[sortKey], bv = b[sortKey];
+        const av = sortKey === 'statusLabel' ? statusLabel(a) : a[sortKey];
+        const bv = sortKey === 'statusLabel' ? statusLabel(b) : b[sortKey];
         if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sortDir;
         return String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv)) * sortDir;
       });
@@ -211,6 +248,7 @@ export function renderHtml(data) {
         '<tr class="clickable" data-id="' + esc(u.accountId) + '">' +
         '<td>' + esc(u.displayName) + '</td>' +
         '<td>' + (u.emailAddress ? esc(u.emailAddress) : '—') + '</td>' +
+        '<td class="status-' + statusKey(u) + '">' + statusLabel(u) + '</td>' +
         '<td class="num">' + u.areaCount + '</td></tr>')
       .join('');
 
@@ -224,8 +262,13 @@ export function renderHtml(data) {
     const u = data.users.find((x) => x.accountId === accountId);
     if (!u) return;
     document.getElementById('detail-name').textContent = u.displayName;
-    document.getElementById('detail-sub').textContent =
-      (u.emailAddress || '—') + ' · ' + u.areaCount + ' Bereiche';
+    const groups = userGroups(u);
+    document.getElementById('detail-sub').innerHTML =
+      esc(u.emailAddress || '—') + ' · <span class="status-' + statusKey(u) + '">' +
+      statusLabel(u) + '</span> · ' + u.areaCount + (u.areaCount === 1 ? ' Bereich' : ' Bereiche') +
+      '<div class="groups">Rollen über Gruppen: ' +
+      (groups.length > 0 ? groups.map((g) => esc(g)).join(', ') : 'keine (nur direkt)') +
+      '</div>';
     document.getElementById('detail-body').innerHTML = u.assignments
       .map((a) =>
         '<tr><td>' + esc(a.projectName) + '</td><td><code>' + esc(a.projectKey) + '</code></td>' +
@@ -256,13 +299,25 @@ export function renderHtml(data) {
       renderOverview();
     });
   });
+  document.getElementById('group-filter').addEventListener('change', (e) => {
+    groupFilter = e.target.value;
+    renderOverview();
+  });
+  document.getElementById('status-filter').addEventListener('change', (e) => {
+    statusFilter = e.target.value;
+    renderOverview();
+  });
   document.getElementById('reset').addEventListener('click', () => {
     document.getElementById('filter').value = '';
     document.getElementById('min-areas').value = '';
     document.getElementById('max-areas').value = '';
+    document.getElementById('group-filter').value = '';
+    document.getElementById('status-filter').value = '';
     filter = '';
     minAreas = null;
     maxAreas = null;
+    groupFilter = '';
+    statusFilter = '';
     renderOverview();
   });
   document.querySelectorAll('th[data-sort]').forEach((th) => {
@@ -273,6 +328,18 @@ export function renderHtml(data) {
     });
   });
 
+  // Only groups that actually grant a role appear here, so the dropdown never
+  // offers a value that would filter down to nothing.
+  function populateGroupFilter() {
+    const all = [...new Set(data.users.flatMap(userGroups))].sort((a, b) => a.localeCompare(b));
+    const select = document.getElementById('group-filter');
+    select.insertAdjacentHTML(
+      'beforeend',
+      all.map((g) => '<option value="' + esc(g) + '">' + esc(g) + '</option>').join(''),
+    );
+  }
+
+  populateGroupFilter();
   renderBanners();
   renderOverview();
 })();

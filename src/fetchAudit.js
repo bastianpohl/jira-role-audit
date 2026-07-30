@@ -78,7 +78,9 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     } catch (err) {
       if (err.fatal) throw err;
       warnings.push(`User ${accountId}: ${err.message}`);
-      detail = { accountId, displayName: fallbackName, emailAddress: null };
+      // active stays null rather than defaulting: an unknown status must not be
+      // rendered as "Aktiv" in a permissions report.
+      detail = { accountId, displayName: fallbackName, emailAddress: null, active: null };
     }
     userCache.set(accountId, detail);
     return detail;
@@ -142,6 +144,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
               accountId: user.accountId,
               displayName: user.displayName,
               emailAddress: user.emailAddress ?? null,
+              active: user.active ?? null,
               via: { kind: 'direct' },
             });
           } else if (actor.type === 'atlassian-group-role-actor' && actor.actorGroup) {
@@ -155,6 +158,7 @@ export async function buildAudit(client, baseUrl, opts = {}) {
                 accountId: member.accountId,
                 displayName: member.displayName,
                 emailAddress: member.emailAddress ?? null,
+                active: member.active ?? null,
                 via: { kind: 'group', groupName },
               });
             }

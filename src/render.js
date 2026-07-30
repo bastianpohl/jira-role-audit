@@ -31,11 +31,24 @@ export function renderHtml(data) {
   .controls label { font-size: .9rem; }
   /* Each label stays glued to its control, so wrapping never splits the pair. */
   .field { display: inline-flex; align-items: center; gap: .35rem; }
-  .field.stacked { flex-direction: column; align-items: flex-start; gap: .2rem; }
   .controls button { padding: .4rem .7rem; cursor: pointer; }
   .controls select { padding: .35rem .4rem; max-width: 220px; }
-  .controls select[multiple] { min-width: 140px; }
-  .hint { color: #888; font-size: .8rem; flex-basis: 100%; }
+  .facet-btn .badge {
+    display: inline-block; margin-left: .4rem; padding: 0 .4rem; border-radius: 999px;
+    background: #0288d1; color: #fff; font-size: .8rem; font-variant-numeric: tabular-nums;
+  }
+  .facet-btn.active { border-color: #0288d1; }
+  dialog { border: 1px solid #8886; border-radius: 6px; padding: 1rem; min-width: 280px; max-width: 90vw; }
+  dialog::backdrop { background: #0008; }
+  dialog h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+  .facet-bulk { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+  .facet-bulk button { padding: .2rem .5rem; cursor: pointer; font-size: .85rem; }
+  .facet-list { max-height: 50vh; overflow-y: auto; border: 1px solid #8884; border-radius: 4px; padding: .4rem .6rem; }
+  .facet-list label { display: flex; align-items: center; gap: .5rem; padding: .2rem 0; cursor: pointer; }
+  .facet-list .empty { color: #888; font-style: italic; }
+  .facet-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .8rem; }
+  .facet-actions button { padding: .4rem .9rem; cursor: pointer; }
+  .facet-actions .primary { font-weight: 600; }
   .status-inactive { color: #c62828; font-weight: 600; }
   .status-unknown { color: #888; font-style: italic; }
   .groups { margin-top: .3rem; }
@@ -85,16 +98,9 @@ export function renderHtml(data) {
         <option value="unknown">Status unbekannt</option>
       </select>
     </span>
-    <span class="field stacked">
-      <label for="group-filter">Gruppen</label>
-      <select id="group-filter" multiple size="4"></select>
-    </span>
-    <span class="field stacked">
-      <label for="role-filter">Rollen</label>
-      <select id="role-filter" multiple size="4"></select>
-    </span>
+    <button type="button" class="facet-btn" id="group-btn" data-facet="group">Gruppen</button>
+    <button type="button" class="facet-btn" id="role-btn" data-facet="role">Rollen</button>
     <button type="button" id="reset">Filter zurücksetzen</button>
-    <span class="hint">Gruppen/Rollen: Mehrfachauswahl mit Strg/Cmd oder Shift</span>
   </div>
   <table>
     <thead><tr>
@@ -107,6 +113,20 @@ export function renderHtml(data) {
   </table>
   <div class="meta" id="count"></div>
 </section>
+
+<dialog id="facet-dialog">
+  <h2 id="facet-title"></h2>
+  <div class="facet-bulk">
+    <button type="button" id="facet-all">Alle</button>
+    <button type="button" id="facet-none">Keine</button>
+    <span id="facet-selected" class="meta"></span>
+  </div>
+  <div id="facet-list" class="facet-list"></div>
+  <div class="facet-actions">
+    <button type="button" id="facet-cancel">Abbrechen</button>
+    <button type="button" id="facet-apply" class="primary">Übernehmen</button>
+  </div>
+</dialog>
 
 <section id="detail" class="hidden">
   <span class="back" id="back">&larr; Zurück zur Übersicht</span>
@@ -136,10 +156,6 @@ export function renderHtml(data) {
   let groupFilter = [];
   let roleFilter = [];
   let statusFilter = '';
-
-  function selectedValues(id) {
-    return [...document.getElementById(id).selectedOptions].map((o) => o.value);
-  }
 
   function matchesAny(selected, values) {
     return selected.length === 0 || values.some((v) => selected.includes(v));
@@ -331,14 +347,6 @@ export function renderHtml(data) {
       renderOverview();
     });
   });
-  document.getElementById('group-filter').addEventListener('change', () => {
-    groupFilter = selectedValues('group-filter');
-    renderOverview();
-  });
-  document.getElementById('role-filter').addEventListener('change', () => {
-    roleFilter = selectedValues('role-filter');
-    renderOverview();
-  });
   document.getElementById('status-filter').addEventListener('change', (e) => {
     statusFilter = e.target.value;
     renderOverview();
@@ -348,15 +356,14 @@ export function renderHtml(data) {
     document.getElementById('min-areas').value = '';
     document.getElementById('max-areas').value = '';
     document.getElementById('status-filter').value = '';
-    ['group-filter', 'role-filter'].forEach((id) => {
-      [...document.getElementById(id).options].forEach((o) => { o.selected = false; });
-    });
     filter = '';
     minAreas = null;
     maxAreas = null;
     groupFilter = [];
     roleFilter = [];
     statusFilter = '';
+    updateFacetButton('group');
+    updateFacetButton('role');
     renderOverview();
   });
   document.querySelectorAll('th[data-sort]').forEach((th) => {
@@ -368,16 +375,93 @@ export function renderHtml(data) {
   });
 
   // Options come from the data, so a selection can never filter down to nothing.
-  function populateFacet(id, pick) {
-    const all = [...new Set(data.users.flatMap(pick))].sort((a, b) => a.localeCompare(b));
-    document.getElementById(id).insertAdjacentHTML(
-      'beforeend',
-      all.map((v) => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join(''),
-    );
+  const facets = {
+    group: {
+      title: 'Gruppen filtern',
+      button: 'group-btn',
+      label: 'Gruppen',
+      empty: 'Keine Gruppen — alle Rollen sind direkt zugewiesen.',
+      options: [...new Set(data.users.flatMap(userGroups))].sort((a, b) => a.localeCompare(b)),
+      get selected() { return groupFilter; },
+      set selected(v) { groupFilter = v; },
+    },
+    role: {
+      title: 'Rollen filtern',
+      button: 'role-btn',
+      label: 'Rollen',
+      empty: 'Keine Rollen gefunden.',
+      options: [...new Set(data.users.flatMap(userRoles))].sort((a, b) => a.localeCompare(b)),
+      get selected() { return roleFilter; },
+      set selected(v) { roleFilter = v; },
+    },
+  };
+
+  const dialog = document.getElementById('facet-dialog');
+  let openFacet = null;
+
+  function updateFacetButton(key) {
+    const facet = facets[key];
+    const btn = document.getElementById(facet.button);
+    const n = facet.selected.length;
+    // The badge appears only when the filter is actually narrowing something —
+    // a permanent "(0)" would read as a state rather than as "no filter".
+    btn.innerHTML = esc(facet.label) + (n > 0 ? ' <span class="badge">' + n + '</span>' : '');
+    btn.classList.toggle('active', n > 0);
   }
 
-  populateFacet('group-filter', userGroups);
-  populateFacet('role-filter', userRoles);
+  function updateDialogSelectedCount() {
+    const checked = [...document.querySelectorAll('#facet-list input:checked')].length;
+    const total = document.querySelectorAll('#facet-list input').length;
+    document.getElementById('facet-selected').textContent =
+      total === 0 ? '' : checked + ' von ' + total + ' ausgewählt';
+  }
+
+  // The dialog edits a working copy: the live filter is only touched on
+  // "Übernehmen", which makes "Abbrechen" and ESC correct by construction.
+  function showFacetDialog(key) {
+    const facet = facets[key];
+    openFacet = key;
+    document.getElementById('facet-title').textContent = facet.title;
+    document.getElementById('facet-list').innerHTML =
+      facet.options.length === 0
+        ? '<p class="empty">' + esc(facet.empty) + '</p>'
+        : facet.options
+            .map((v) =>
+              '<label><input type="checkbox" value="' + esc(v) + '"' +
+              (facet.selected.includes(v) ? ' checked' : '') + '>' + esc(v) + '</label>')
+            .join('');
+    updateDialogSelectedCount();
+    dialog.showModal();
+  }
+
+  function applyFacetDialog() {
+    if (openFacet) {
+      facets[openFacet].selected = [
+        ...document.querySelectorAll('#facet-list input:checked'),
+      ].map((i) => i.value);
+      updateFacetButton(openFacet);
+      renderOverview();
+    }
+    dialog.close();
+  }
+
+  document.querySelectorAll('.facet-btn').forEach((btn) => {
+    btn.addEventListener('click', () => showFacetDialog(btn.getAttribute('data-facet')));
+  });
+  document.getElementById('facet-list').addEventListener('change', updateDialogSelectedCount);
+  document.getElementById('facet-all').addEventListener('click', () => {
+    document.querySelectorAll('#facet-list input').forEach((i) => { i.checked = true; });
+    updateDialogSelectedCount();
+  });
+  document.getElementById('facet-none').addEventListener('click', () => {
+    document.querySelectorAll('#facet-list input').forEach((i) => { i.checked = false; });
+    updateDialogSelectedCount();
+  });
+  document.getElementById('facet-apply').addEventListener('click', applyFacetDialog);
+  document.getElementById('facet-cancel').addEventListener('click', () => dialog.close());
+
+  updateFacetButton('group');
+  updateFacetButton('role');
   renderBanners();
   renderOverview();
 })();

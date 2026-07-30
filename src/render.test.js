@@ -79,10 +79,13 @@ describe('renderHtml', () => {
     expect(html).toContain('>Status<');
   });
 
-  test('group and role filters allow multiple selection', () => {
+  test('group and role filters are buttons opening a checkbox dialog', () => {
     const html = renderHtml(data);
-    expect(html).toMatch(/id="group-filter" multiple/);
-    expect(html).toMatch(/id="role-filter" multiple/);
+    expect(html).toContain('id="group-btn"');
+    expect(html).toContain('id="role-btn"');
+    expect(html).toContain('<dialog id="facet-dialog">');
+    expect(html).toContain('id="facet-apply"');
+    expect(html).toContain('id="facet-cancel"');
   });
 
   test('escapes the closing script sequence to prevent breakout', () => {

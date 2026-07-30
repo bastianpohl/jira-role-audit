@@ -137,10 +137,13 @@ a browser:
 
 - overview table (Name, E-Mail, Status, Anzahl Bereiche), sortable by clicking a header
 - filters, all combining: name/e-mail search, a min/max range on **Anzahl Bereiche**,
-  a **status** dropdown (aktiv / inaktiv / unbekannt), and multi-select lists for
-  **groups** and **roles**. Selecting several entries in one list matches *any* of
-  them; the lists themselves combine with *and* — e.g. groups `devs`+`extern` with
-  role `Administrator` finds admins coming in through either group
+  a **status** dropdown (aktiv / inaktiv / unbekannt), and **Gruppen** / **Rollen**
+  buttons. Each opens a dialog with a checkbox per entry and *Alle* / *Keine*
+  shortcuts; changes take effect on *Übernehmen* and are discarded on *Abbrechen*
+  or Esc. The button carries a badge with the number of active entries.
+  Selecting several entries in one dialog matches *any* of them, while the two
+  filters combine with *and* — e.g. groups `devs`+`extern` with role
+  `Administrator` finds admins coming in through either group
 - below the table, how many entries are shown out of the total
 - click a row for the per-user detail view (Projekt, Key, Rolle, Zugriffsweg), including
   the user's status and the groups granting them roles

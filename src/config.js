@@ -9,7 +9,25 @@ import 'dotenv/config';
  * @property {string} [clientId]     OAuth 2.0 client id of the service account (auth === 'oauth').
  * @property {string} [clientSecret] OAuth 2.0 client secret of the service account (auth === 'oauth').
  * @property {string|null} cloudId Optional override; resolved from baseUrl when null. OAuth only.
+ * @property {string[]} excludeProjects Project keys to leave out of the report, upper-cased.
  */
+
+/**
+ * Parse a comma/whitespace separated list of project keys.
+ * Upper-cased because Jira keys are upper-case, so a lower-case entry in .env is
+ * a typo that should still match rather than silently exclude nothing.
+ * @param {string|undefined} raw
+ * @returns {string[]}
+ */
+function parseProjectKeys(raw) {
+  if (!raw) return [];
+  return [...new Set(
+    raw
+      .split(/[,\s]+/)
+      .map((k) => k.trim().toUpperCase())
+      .filter(Boolean),
+  )];
+}
 
 /**
  * Decide which credential to use.
@@ -75,22 +93,25 @@ export function loadConfig(env = process.env) {
   }
 
   const baseUrl = baseUrlRaw.replace(/\/+$/, '');
+  const shared = {
+    baseUrl,
+    cloudId: env.JIRA_CLOUD_ID || null,
+    excludeProjects: parseProjectKeys(env.JIRA_EXCLUDE_PROJECTS),
+  };
 
   if (mode === 'basic') {
     return {
+      ...shared,
       auth: 'basic',
-      baseUrl,
       email: env.JIRA_EMAIL,
       apiToken: env.JIRA_API_TOKEN,
-      cloudId: env.JIRA_CLOUD_ID || null,
     };
   }
 
   return {
+    ...shared,
     auth: 'oauth',
-    baseUrl,
     clientId: env.JIRA_CLIENT_ID,
     clientSecret: env.JIRA_CLIENT_SECRET,
-    cloudId: env.JIRA_CLOUD_ID || null,
   };
 }

@@ -54,8 +54,15 @@ async function main() {
 
   const identity = config.auth === 'basic' ? config.email : 'service account (OAuth)';
 
+  if (config.excludeProjects.length > 0) {
+    console.log(`Excluding ${config.excludeProjects.length} project(s): ${config.excludeProjects.join(', ')}`);
+  }
+
   console.log(`Fetching Jira audit data from ${config.baseUrl} …`);
-  const { data, warnings } = await buildAudit(client, config.baseUrl, { identity });
+  const { data, warnings } = await buildAudit(client, config.baseUrl, {
+    identity,
+    excludeProjects: config.excludeProjects,
+  });
 
   const outPath = process.env.OUTPUT_FILE ?? 'jira-role-audit.html';
   warnIfNotGitIgnored(outPath);

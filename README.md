@@ -56,6 +56,18 @@ Other variables:
 
 - `JIRA_BASE_URL` — e.g. `https://your-org.atlassian.net` (always required)
 - `JIRA_CLOUD_ID` — *optional, OAuth only*; resolved from `JIRA_BASE_URL` when unset
+- `JIRA_EXCLUDE_PROJECTS` — *optional*; project keys to leave out, e.g. `HR, LEGAL`
+
+### Excluding projects
+
+`JIRA_EXCLUDE_PROJECTS` takes comma- or space-separated project keys (case-insensitive)
+and skips them entirely — their roles are never fetched. Exclusions are **named in the
+report** in their own banner and left out of the project counts, so a narrowed report can
+never be mistaken for a full one.
+
+If a configured key matches no visible project, the run warns and the report says so.
+That case is worth flagging: a mistyped key, or one the account cannot see, otherwise
+looks exactly like a successful exclusion.
 
 ## Scopes and permissions
 

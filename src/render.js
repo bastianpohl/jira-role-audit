@@ -47,12 +47,15 @@ export function renderHtml(data) {
   .banner .reason { color: #888; }
   .banner-gap { border-color: #c62828; background: #c6282814; }
   .banner-scope { border-color: #0288d1; background: #0288d114; }
+  .banner-excluded { border-color: #6a1b9a; background: #6a1b9a14; }
+  .banner .alert { color: #c62828; font-weight: 600; }
 </style>
 </head>
 <body>
 <h1>Jira Rollen-/Bereichs-Report</h1>
 <div class="meta" id="meta"></div>
 <div id="gap-banner" class="banner banner-gap hidden"></div>
+<div id="excluded-banner" class="banner banner-excluded hidden"></div>
 <div id="scope-banner" class="banner banner-scope"></div>
 
 <section id="overview">
@@ -117,6 +120,35 @@ export function renderHtml(data) {
       .join('') + '</ul></div>';
   }
 
+  // Deliberate exclusions get their own banner rather than being folded into the
+  // gap list: they are a choice, not a failure — but leaving them unstated would
+  // make the report quietly narrower than it looks.
+  function renderExcludedBanner(cov) {
+    const excluded = (cov && cov.excludedProjects) || [];
+    const unmatched = (cov && cov.unmatchedExclusions) || [];
+    if (excluded.length === 0 && unmatched.length === 0) return;
+
+    const banner = document.getElementById('excluded-banner');
+    const listed = excluded.length > 0
+      ? '<ul>' + excluded
+          .map((p) => '<li><code>' + esc(p.key) + '</code> ' + esc(p.name) + '</li>')
+          .join('') + '</ul>'
+      : '';
+    const warn = unmatched.length > 0
+      ? '<p class="alert">Ohne Wirkung: ' + esc(unmatched.join(', ')) +
+        ' — kein sichtbares Projekt hat diese Schlüssel. Tippfehler oder fehlende ' +
+        'Berechtigung; diese Projekte sind also nicht nachweislich ausgeschlossen.</p>'
+      : '';
+
+    banner.innerHTML =
+      '<h2>Bewusst ausgeschlossen (' + excluded.length + ')</h2>' +
+      (excluded.length > 0
+        ? 'Diese Projekte wurden per Konfiguration übergangen und sind in den Zahlen unten nicht enthalten.'
+        : '') +
+      listed + warn;
+    banner.classList.remove('hidden');
+  }
+
   // The report's completeness depends entirely on the acting account's permissions,
   // so state the scope unconditionally and call out measurable gaps loudly.
   function renderBanners() {
@@ -133,6 +165,8 @@ export function renderHtml(data) {
       ' Projekte ohne Leseberechtigung erscheinen nicht in der Jira-Projektsuche und können ' +
       'hier deshalb auch nicht als fehlend ausgewiesen werden — für einen vollständigen Report ' +
       'braucht das Konto die globale Berechtigung <em>Jira administrieren</em>.';
+
+    renderExcludedBanner(cov);
 
     if (!cov || cov.noKnownGaps) return;
 

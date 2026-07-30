@@ -42,7 +42,7 @@ function roleIdFromUrl(roleUrl) {
  * (with caching, warn-and-continue on failures), and invert to a user view.
  * @param {import('./jiraClient.js').JiraClient} client
  * @param {string} baseUrl
- * @param {{ now?: () => Date, identity?: string|null }} [opts]
+ * @param {{ now?: () => Date, identity?: string|null, excludeProjects?: string[] }} [opts]
  * @returns {Promise<AuditResult>}
  */
 export async function buildAudit(client, baseUrl, opts = {}) {
@@ -89,7 +89,18 @@ export async function buildAudit(client, baseUrl, opts = {}) {
     (startAt) => `/rest/api/3/project/search?startAt=${startAt}&maxResults=50`,
   );
 
+  const excludeKeys = new Set((opts.excludeProjects ?? []).map((k) => k.toUpperCase()));
+  const excludedProjects = [];
+  const matchedExclusions = new Set();
+
   for (const project of projects) {
+    const key = String(project.key ?? '').toUpperCase();
+    if (excludeKeys.has(key)) {
+      excludedProjects.push({ key: project.key, name: project.name });
+      matchedExclusions.add(key);
+      continue;
+    }
+
     let roleMap;
     try {
       roleMap = await client.getJson(`/rest/api/3/project/${encodeURIComponent(project.key)}/role`);
@@ -171,15 +182,24 @@ export async function buildAudit(client, baseUrl, opts = {}) {
   const skippedProjects = [...skipped.values()];
   const partialProjects = [...partial.values()];
 
+  // An exclusion matching nothing is a silent lie: you believe a project is
+  // suppressed while it may simply be invisible or misspelled. Surface it.
+  const unmatchedExclusions = [...excludeKeys].filter((k) => !matchedExclusions.has(k));
+  for (const key of unmatchedExclusions) {
+    warnings.push(`Excluded project ${key} matched no visible project — check the key.`);
+  }
+
   const data = invertAssignments(raws, {
     generatedAt: now().toISOString(),
     baseUrl,
     identity: opts.identity ?? null,
     coverage: {
       projectsVisible: projects.length,
-      projectsAudited: projects.length - skippedProjects.length,
+      projectsAudited: projects.length - skippedProjects.length - excludedProjects.length,
       skippedProjects,
       partialProjects,
+      excludedProjects,
+      unmatchedExclusions,
       warningCount: warnings.length,
       // Only covers gaps we can *see*. Projects the account cannot browse never
       // appear in /project/search at all, so they can never be counted here —

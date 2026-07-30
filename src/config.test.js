@@ -57,6 +57,25 @@ describe('loadConfig', () => {
     expect(() => loadConfig({})).toThrow(/JIRA_EMAIL/);
   });
 
+  test('excludeProjects defaults to an empty list', () => {
+    expect(loadConfig(base).excludeProjects).toEqual([]);
+  });
+
+  test('parses excluded project keys, upper-casing and de-duplicating them', () => {
+    const cfg = loadConfig({ ...base, JIRA_EXCLUDE_PROJECTS: 'aaa, BBB,ccc  DDD, bbb' });
+    expect(cfg.excludeProjects).toEqual(['AAA', 'BBB', 'CCC', 'DDD']);
+  });
+
+  test('ignores stray separators in the exclusion list', () => {
+    const cfg = loadConfig({ ...base, JIRA_EXCLUDE_PROJECTS: ' , ,AAA,, ' });
+    expect(cfg.excludeProjects).toEqual(['AAA']);
+  });
+
+  test('exclusions are available in basic auth mode too', () => {
+    const cfg = loadConfig({ ...basicBase, JIRA_EXCLUDE_PROJECTS: 'ZZZ' });
+    expect(cfg.excludeProjects).toEqual(['ZZZ']);
+  });
+
   test('cloudId is null when not configured', () => {
     expect(loadConfig(base).cloudId).toBeNull();
   });

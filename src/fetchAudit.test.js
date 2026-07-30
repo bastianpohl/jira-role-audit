@@ -404,6 +404,75 @@ describe('buildAudit', () => {
     expect(data.coverage.partialProjects[0].reasons).toHaveLength(2);
   });
 
+  test('excludes configured projects without fetching their roles', async () => {
+    const client = mockClient({
+      '/project/search': {
+        values: [
+          { id: '1', key: 'AAA', name: 'Alpha' },
+          { id: '2', key: 'BBB', name: 'Beta' },
+        ],
+        isLast: true,
+      },
+      '/project/AAA/role': { Member: 'https://acme.atlassian.net/rest/api/3/project/AAA/role/10' },
+      '/project/AAA/role/10': {
+        actors: [{ type: 'atlassian-user-role-actor', displayName: 'Alice', actorUser: { accountId: 'u1' } }],
+      },
+      '/user?accountId=u1': { accountId: 'u1', displayName: 'Alice', emailAddress: 'a@acme.com' },
+    });
+
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', {
+      now,
+      excludeProjects: ['BBB'],
+    });
+
+    expect(data.coverage.excludedProjects).toEqual([{ key: 'BBB', name: 'Beta' }]);
+    expect(data.coverage.projectsVisible).toBe(2);
+    expect(data.coverage.projectsAudited).toBe(1);
+    // No role call for the excluded project.
+    const paths = client.getJson.mock.calls.map(([p]) => p);
+    expect(paths.some((p) => p.includes('BBB'))).toBe(false);
+    // And nobody holds a role in it.
+    expect(data.users.flatMap((u) => u.assignments).some((a) => a.projectKey === 'BBB')).toBe(false);
+  });
+
+  test('matches exclusions case-insensitively', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+    });
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', {
+      now,
+      excludeProjects: ['aaa'],
+    });
+    expect(data.coverage.excludedProjects).toEqual([{ key: 'AAA', name: 'Alpha' }]);
+    expect(data.coverage.unmatchedExclusions).toEqual([]);
+  });
+
+  test('warns when an exclusion matches no visible project', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+      '/project/AAA/role': {},
+    });
+    const { data, warnings } = await buildAudit(client, 'https://acme.atlassian.net', {
+      now,
+      excludeProjects: ['NOPE'],
+    });
+    expect(data.coverage.unmatchedExclusions).toEqual(['NOPE']);
+    expect(warnings.some((w) => /NOPE/.test(w))).toBe(true);
+  });
+
+  test('an exclusion is not counted as a gap — it is deliberate', async () => {
+    const client = mockClient({
+      '/project/search': { values: [{ id: '1', key: 'AAA', name: 'Alpha' }], isLast: true },
+    });
+    const { data } = await buildAudit(client, 'https://acme.atlassian.net', {
+      now,
+      excludeProjects: ['AAA'],
+    });
+    expect(data.coverage.noKnownGaps).toBe(true);
+    expect(data.coverage.skippedProjects).toEqual([]);
+    expect(data.coverage.projectsAudited).toBe(0);
+  });
+
   test('passes the acting identity into the report data', async () => {
     const client = mockClient({
       '/project/search': { values: [], isLast: true },

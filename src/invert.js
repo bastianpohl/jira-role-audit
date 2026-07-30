@@ -35,6 +35,8 @@
  * @property {number} projectsAudited  Of those, the ones whose roles were readable.
  * @property {ProjectGap[]} skippedProjects  Role list unreadable — no data at all.
  * @property {ProjectGap[]} partialProjects  Some roles or actors missing.
+ * @property {{ key: string, name: string }[]} [excludedProjects]  Left out on purpose.
+ * @property {string[]} [unmatchedExclusions]  Configured exclusions that matched nothing.
  * @property {number} warningCount
  * @property {boolean} noKnownGaps  No *detectable* gaps; projects the account cannot
  *   browse are invisible to /project/search and therefore never counted.
